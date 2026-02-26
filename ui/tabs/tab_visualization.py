@@ -10,7 +10,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from ui.components.widgets import StepRunWidget, PathPicker
 from app.project import ProjectManager, StepStatus
-from app.runner import PipelineWorker
+import sys
+from app.runner import ScriptWorker
 
 
 class VisualizationTab(QWidget):
@@ -103,15 +104,10 @@ class VisualizationTab(QWidget):
         self.run_widget.set_running(True)
         self.run_widget.log.append(f"[INFO] Viz | Marker: {cfg.viz_marker_size}px | Line: {cfg.viz_line_width}px | Save video: {cfg.viz_save_video}")
 
-        def run_viz():
-            try:
-                os.chdir(cfg.project_dir)
-                from Pose2Sim import Pose2Sim
-                Pose2Sim.markerAugmentation()
-            except ImportError:
-                raise RuntimeError("pose2sim is not installed.")
-
-        self.worker = PipelineWorker("Visualization", run_viz)
+        cmd = [sys.executable, '-c',
+               f'import os; os.chdir({repr(cfg.project_dir)}); '
+               f'from Pose2Sim import Pose2Sim; Pose2Sim.markerAugmentation()']
+        self.worker = ScriptWorker(cmd, cwd=cfg.project_dir)
         self.worker.log_signal.connect(self.run_widget.log_message)
         self.worker.progress_signal.connect(self.run_widget.set_progress)
         self.worker.finished_signal.connect(self._on_finished)
@@ -119,7 +115,7 @@ class VisualizationTab(QWidget):
 
     def _abort(self):
         if self.worker:
-            self.worker.terminate()
+            self.worker.abort()
         self.run_widget.set_running(False)
         self.run_widget.log.append("[WARNING] Aborted.")
 

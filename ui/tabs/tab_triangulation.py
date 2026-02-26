@@ -10,7 +10,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from ui.components.widgets import StepRunWidget
 from app.project import ProjectManager, StepStatus
-from app.runner import PipelineWorker
+import sys
+from app.runner import ScriptWorker
 
 
 class TriangulationTab(QWidget):
@@ -94,15 +95,10 @@ class TriangulationTab(QWidget):
             f"Min cams: {cfg.triang_min_cameras}"
         )
 
-        def run_triang():
-            try:
-                os.chdir(cfg.project_dir)
-                from Pose2Sim import Pose2Sim
-                Pose2Sim.triangulation()
-            except ImportError:
-                raise RuntimeError("pose2sim is not installed.")
-
-        self.worker = PipelineWorker("Triangulation", run_triang)
+        cmd = [sys.executable, '-c',
+               f'import os; os.chdir({repr(cfg.project_dir)}); '
+               f'from Pose2Sim import Pose2Sim; Pose2Sim.triangulation()']
+        self.worker = ScriptWorker(cmd, cwd=cfg.project_dir)
         self.worker.log_signal.connect(self.run_widget.log_message)
         self.worker.progress_signal.connect(self.run_widget.set_progress)
         self.worker.finished_signal.connect(self._on_finished)
@@ -110,7 +106,7 @@ class TriangulationTab(QWidget):
 
     def _abort(self):
         if self.worker:
-            self.worker.terminate()
+            self.worker.abort()
         self.run_widget.set_running(False)
         self.run_widget.log.append("[WARNING] Aborted.")
 

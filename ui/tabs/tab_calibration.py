@@ -12,7 +12,8 @@ from PyQt5.QtCore import Qt
 
 from ui.components.widgets import PathPicker, StepRunWidget
 from app.project import ProjectManager, StepStatus
-from app.runner import PipelineWorker
+import sys
+from app.runner import ScriptWorker
 
 
 class CalibrationTab(QWidget):
@@ -153,18 +154,10 @@ class CalibrationTab(QWidget):
         self.run_widget.log.append(f"[INFO] Intrinsic: {cfg.calib_intrinsic_type} | Extrinsic: {cfg.calib_extrinsic_type}")
         self.run_widget.log.append(f"[INFO] Board: {cfg.checkerboard_cols}x{cfg.checkerboard_rows}, {cfg.square_size_mm}mm squares")
 
-        def run_calib():
-            try:
-                os.chdir(cfg.project_dir)
-                from Pose2Sim import Pose2Sim
-                Pose2Sim.calibration()
-            except ImportError:
-                raise RuntimeError(
-                    "pose2sim is not installed. Run: pip install pose2sim\n"
-                    "or install from: https://github.com/perfanalytics/pose2sim"
-                )
-
-        self.worker = PipelineWorker("Calibration", run_calib)
+        cmd = [sys.executable, '-c',
+               f'import os; os.chdir({repr(cfg.project_dir)}); '
+               f'from Pose2Sim import Pose2Sim; Pose2Sim.calibration()']
+        self.worker = ScriptWorker(cmd, cwd=cfg.project_dir)
         self.worker.log_signal.connect(self.run_widget.log_message)
         self.worker.progress_signal.connect(self.run_widget.set_progress)
         self.worker.finished_signal.connect(self._on_finished)
@@ -172,7 +165,7 @@ class CalibrationTab(QWidget):
 
     def _abort(self):
         if self.worker:
-            self.worker.terminate()
+            self.worker.abort()
         self.run_widget.set_running(False)
         self.run_widget.log.append("[WARNING] Aborted by user.")
 

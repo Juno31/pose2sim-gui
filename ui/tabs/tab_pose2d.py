@@ -11,7 +11,8 @@ from PyQt5.QtCore import Qt
 
 from ui.components.widgets import PathPicker, StepRunWidget
 from app.project import ProjectManager, StepStatus
-from app.runner import PipelineWorker
+import sys
+from app.runner import ScriptWorker
 
 
 class Pose2DTab(QWidget):
@@ -156,15 +157,10 @@ class Pose2DTab(QWidget):
         if cfg.pose_estimator == "RTMLib":
             self.run_widget.log.append(f"[INFO] Model: {cfg.rtmlib_model} | Backend: {self.rtmlib_backend.currentText()} | Device: {self.rtmlib_device.currentText()}")
 
-        def run_pose():
-            try:
-                os.chdir(cfg.project_dir)
-                from Pose2Sim import Pose2Sim
-                Pose2Sim.poseEstimation()
-            except ImportError:
-                raise RuntimeError("pose2sim is not installed. Run: pip install pose2sim")
-
-        self.worker = PipelineWorker("2D Pose Estimation", run_pose)
+        cmd = [sys.executable, '-c',
+               f'import os; os.chdir({repr(cfg.project_dir)}); '
+               f'from Pose2Sim import Pose2Sim; Pose2Sim.poseEstimation()']
+        self.worker = ScriptWorker(cmd, cwd=cfg.project_dir)
         self.worker.log_signal.connect(self.run_widget.log_message)
         self.worker.progress_signal.connect(self.run_widget.set_progress)
         self.worker.finished_signal.connect(self._on_finished)
@@ -172,7 +168,7 @@ class Pose2DTab(QWidget):
 
     def _abort(self):
         if self.worker:
-            self.worker.terminate()
+            self.worker.abort()
         self.run_widget.set_running(False)
         self.run_widget.log.append("[WARNING] Aborted by user.")
 

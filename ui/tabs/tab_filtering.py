@@ -10,7 +10,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from ui.components.widgets import StepRunWidget
 from app.project import ProjectManager, StepStatus
-from app.runner import PipelineWorker
+import sys
+from app.runner import ScriptWorker
 
 
 class FilteringTab(QWidget):
@@ -103,15 +104,10 @@ class FilteringTab(QWidget):
         self.run_widget.set_running(True)
         self.run_widget.log.append(f"[INFO] Filter: {cfg.filter_type} | Cutoff: {cfg.filter_cutoff}Hz | Order: {cfg.filter_order}")
 
-        def run_filter():
-            try:
-                os.chdir(cfg.project_dir)
-                from Pose2Sim import Pose2Sim
-                Pose2Sim.filtering()
-            except ImportError:
-                raise RuntimeError("pose2sim is not installed.")
-
-        self.worker = PipelineWorker("Filtering", run_filter)
+        cmd = [sys.executable, '-c',
+               f'import os; os.chdir({repr(cfg.project_dir)}); '
+               f'from Pose2Sim import Pose2Sim; Pose2Sim.filtering()']
+        self.worker = ScriptWorker(cmd, cwd=cfg.project_dir)
         self.worker.log_signal.connect(self.run_widget.log_message)
         self.worker.progress_signal.connect(self.run_widget.set_progress)
         self.worker.finished_signal.connect(self._on_finished)
@@ -119,7 +115,7 @@ class FilteringTab(QWidget):
 
     def _abort(self):
         if self.worker:
-            self.worker.terminate()
+            self.worker.abort()
         self.run_widget.set_running(False)
         self.run_widget.log.append("[WARNING] Aborted.")
 
