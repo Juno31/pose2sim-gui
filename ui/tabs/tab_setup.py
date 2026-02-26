@@ -3,6 +3,7 @@ ui/tabs/tab_setup.py - Project Setup Tab
 """
 
 import os
+import shutil
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QGroupBox, QRadioButton, QButtonGroup,
@@ -171,8 +172,14 @@ class SetupTab(QWidget):
             if os.path.isdir(os.path.join(folder, d)) and d.startswith("cam")
         ]
 
+        has_videos_dir = os.path.isdir(os.path.join(folder, "videos"))
+        has_toml = os.path.exists(os.path.join(folder, "Config.toml"))
+
         if os.path.exists(config_path):
             self.open_hint.setText("✓ markerless_config.json found — project will be fully restored.")
+            self.open_hint.setStyleSheet("color: #7ee787; font-size: 11px; padding-left: 2px;")
+        elif has_videos_dir or has_toml:
+            self.open_hint.setText("✓ Pose2Sim project structure detected — project will be initialised.")
             self.open_hint.setStyleSheet("color: #7ee787; font-size: 11px; padding-left: 2px;")
         elif cam_dirs:
             cam_dirs_sorted = sorted(cam_dirs)
@@ -202,10 +209,19 @@ class SetupTab(QWidget):
             else:
                 # Fallback: infer from folder structure
                 project_name = os.path.basename(folder)
-                cam_dirs = sorted([
-                    d for d in os.listdir(folder)
-                    if os.path.isdir(os.path.join(folder, d)) and d.startswith("cam")
-                ])
+
+                # Try to count cameras from intrinsics dirs (int_camXX_img)
+                intrinsics_dir = os.path.join(folder, "calibration", "intrinsics")
+                if os.path.isdir(intrinsics_dir):
+                    cam_dirs = sorted([
+                        d for d in os.listdir(intrinsics_dir)
+                        if os.path.isdir(os.path.join(intrinsics_dir, d)) and d.startswith("int_cam")
+                    ])
+                else:
+                    cam_dirs = sorted([
+                        d for d in os.listdir(folder)
+                        if os.path.isdir(os.path.join(folder, d)) and d.startswith("cam")
+                    ])
                 camera_count = len(cam_dirs) if 2 <= len(cam_dirs) <= 4 else 2
 
                 self.pm.new_project(folder, project_name, camera_count, "RTMLib")
@@ -237,10 +253,17 @@ class SetupTab(QWidget):
             if estimator == "OpenPose":
                 self.pm.update(openpose_path=self.openpose_picker.path())
 
-            # Create camera subfolders
+            # Create Pose2Sim-compatible folder structure (mirrors Demo_SinglePerson)
+            os.makedirs(os.path.join(project_dir, "videos"), exist_ok=True)
             for i in range(1, camera_count + 1):
-                os.makedirs(os.path.join(project_dir, f"cam{i:02d}"), exist_ok=True)
-                os.makedirs(os.path.join(project_dir, "calibration", f"cam{i:02d}"), exist_ok=True)
+                os.makedirs(os.path.join(project_dir, "calibration", "intrinsics", f"int_cam{i:02d}_img"), exist_ok=True)
+                os.makedirs(os.path.join(project_dir, "calibration", "extrinsics", f"ext_cam{i:02d}_img"), exist_ok=True)
+
+            # Copy Config.toml template from Pose2Sim package
+            import Pose2Sim as _p2s
+            template_toml = os.path.join(os.path.dirname(_p2s.__file__), "Demo_SinglePerson", "Config.toml")
+            if os.path.exists(template_toml):
+                shutil.copy2(template_toml, os.path.join(project_dir, "Config.toml"))
 
             self.pm.config.save(os.path.join(project_dir, "markerless_config.json"))
             self.pm.set_step_status(0, StepStatus.DONE)
@@ -248,7 +271,11 @@ class SetupTab(QWidget):
 
             QMessageBox.information(self, "Project Created",
                 f"Project '{name}' created at:\n{project_dir}\n\n"
-                f"Camera folders (cam01–cam{camera_count:02d}) have been created.")
+                f"Structure:\n"
+                f"  videos/                     ← place camera videos here\n"
+                f"  calibration/intrinsics/     ← int_cam01_img … int_cam{camera_count:02d}_img\n"
+                f"  calibration/extrinsics/     ← ext_cam01_img … ext_cam{camera_count:02d}_img\n"
+                f"  Config.toml                 ← Pose2Sim configuration")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to create project:\n{e}")
 
