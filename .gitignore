@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# Conda environments (never commit the env folder itself)
+conda-env/
+envs/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Pose2Sim project output files (user data — do NOT commit)
+*.c3d
+*.trc
+*.mot
+*.sto
+*.json
+!pose2sim_gui_config.json   # allow example config if you add one
+
+# Video and image files (usually too large for git)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.png
+*.jpg
+*.jpeg
+*.bmp
+
+# Calibration outputs
+*.toml
+!Config.toml                # allow template config
+
+# Logs
+*.log
+
+# pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# mypy
+.mypy_cache/
+
+# Claude Code local settings
+.claude/

@@ -1,0 +1,27 @@
+name: markerless
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python
+  - python=3.10
+
+  # GUI
+  - pyqt=5.15
+
+  # Scientific computing (conda-forge builds are more stable)
+  - numpy>=1.23
+  - scipy>=1.10
+  - matplotlib>=3.5
+
+  # Utilities
+  - toml>=0.10
+
+  # pip-only packages (not available on conda)
+  - pip
+  - pip:
+    - pose2sim>=0.9.0
+    - rtmlib               # RTMLib pose estimator
+    - onnxruntime          # CPU inference (swap for onnxruntime-gpu if NVIDIA GPU)
+    # - onnxruntime-gpu    # Uncomment for NVIDIA GPU support

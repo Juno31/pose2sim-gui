@@ -1,0 +1,20 @@
+# GUI framework
+PyQt5>=5.15.0
+
+# Core pipeline
+pose2sim>=0.9.0
+
+# pose2sim dependencies (usually installed automatically)
+numpy>=1.23.0
+scipy>=1.10.0
+toml>=0.10.2
+
+# Optional: RTMLib pose estimator (recommended)
+# Install separately if needed:
+#   pip install rtmlib
+#   pip install onnxruntime   (CPU)
+#   pip install onnxruntime-gpu  (GPU)
+
+# Optional: For visualization
+matplotlib>=3.5.0
+
