@@ -2,6 +2,7 @@
 ui/tabs/tab_filtering.py - Filtering Tab
 """
 
+import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QGroupBox, QFormLayout,
     QDoubleSpinBox, QSpinBox, QCheckBox, QSplitter, QComboBox
@@ -104,6 +105,7 @@ class FilteringTab(QWidget):
 
         def run_filter():
             try:
+                os.chdir(cfg.project_dir)
                 from Pose2Sim import Pose2Sim
                 Pose2Sim.filtering()
             except ImportError:

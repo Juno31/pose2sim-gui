@@ -2,6 +2,7 @@
 ui/tabs/tab_triangulation.py - Triangulation Tab
 """
 
+import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QGroupBox, QFormLayout,
     QDoubleSpinBox, QSpinBox, QCheckBox, QSplitter
@@ -95,6 +96,7 @@ class TriangulationTab(QWidget):
 
         def run_triang():
             try:
+                os.chdir(cfg.project_dir)
                 from Pose2Sim import Pose2Sim
                 Pose2Sim.triangulation()
             except ImportError:

@@ -158,6 +158,7 @@ class Pose2DTab(QWidget):
 
         def run_pose():
             try:
+                os.chdir(cfg.project_dir)
                 from Pose2Sim import Pose2Sim
                 Pose2Sim.poseEstimation()
             except ImportError:

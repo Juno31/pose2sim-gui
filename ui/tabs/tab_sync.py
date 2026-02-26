@@ -2,6 +2,7 @@
 ui/tabs/tab_sync.py - Synchronization Tab
 """
 
+import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QGroupBox, QFormLayout,
     QDoubleSpinBox, QSpinBox, QCheckBox, QSplitter
@@ -87,6 +88,7 @@ class SyncTab(QWidget):
 
         def run_sync():
             try:
+                os.chdir(cfg.project_dir)
                 from Pose2Sim import Pose2Sim
                 Pose2Sim.synchronization()
             except ImportError:

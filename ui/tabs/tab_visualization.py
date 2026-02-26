@@ -2,6 +2,7 @@
 ui/tabs/tab_visualization.py - 3D Visualization Tab
 """
 
+import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QGroupBox, QFormLayout,
     QSpinBox, QCheckBox, QSplitter, QPushButton, QHBoxLayout
@@ -104,6 +105,7 @@ class VisualizationTab(QWidget):
 
         def run_viz():
             try:
+                os.chdir(cfg.project_dir)
                 from Pose2Sim import Pose2Sim
                 Pose2Sim.markerAugmentation()
             except ImportError:

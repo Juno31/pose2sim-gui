@@ -155,6 +155,7 @@ class CalibrationTab(QWidget):
 
         def run_calib():
             try:
+                os.chdir(cfg.project_dir)
                 from Pose2Sim import Pose2Sim
                 Pose2Sim.calibration()
             except ImportError:
