@@ -3,6 +3,7 @@ ui/tabs/tab_calibration.py - Calibration Tab (Intrinsic + Extrinsic)
 """
 
 import os
+import re
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QComboBox, QDoubleSpinBox, QSpinBox, QFormLayout,
@@ -141,6 +142,38 @@ class CalibrationTab(QWidget):
         cfg.square_size_mm = self.square_size.value()
         cfg.calib_scene_file = self.scene_picker.path()
 
+    def _patch_config_toml(self, project_dir: str):
+        """
+        Pose2Sim bug workaround: when show_detection_intrinsics=true, calibration.py
+        line 770 unpacks findCorners() into two variables, but the function returns only
+        one value when objp is empty (happens on re-runs with a partial Image_points.json).
+        Force non-interactive mode so the single-return code path is used instead.
+        Comments in Config.toml are preserved via regex substitution.
+        """
+        toml_path = os.path.join(project_dir, "Config.toml")
+        if not os.path.exists(toml_path):
+            return
+
+        try:
+            with open(toml_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            patched = re.sub(
+                r'(show_detection_intrinsics\s*=\s*)true',
+                r'\1false',
+                content,
+            )
+
+            if patched != content:
+                with open(toml_path, "w", encoding="utf-8") as f:
+                    f.write(patched)
+                self.run_widget.log.append(
+                    "[INFO] Config.toml: set show_detection_intrinsics=false "
+                    "(automatic corner detection — required for subprocess mode)"
+                )
+        except Exception as exc:
+            self.run_widget.log.append(f"[WARNING] Could not patch Config.toml: {exc}")
+
     def _run(self):
         self._collect_config()
         cfg = self.pm.config
@@ -153,6 +186,8 @@ class CalibrationTab(QWidget):
         self.run_widget.log.append(f"[INFO] Project: {cfg.project_dir}")
         self.run_widget.log.append(f"[INFO] Intrinsic: {cfg.calib_intrinsic_type} | Extrinsic: {cfg.calib_extrinsic_type}")
         self.run_widget.log.append(f"[INFO] Board: {cfg.checkerboard_cols}x{cfg.checkerboard_rows}, {cfg.square_size_mm}mm squares")
+
+        self._patch_config_toml(cfg.project_dir)
 
         cmd = [sys.executable, '-c',
                f'import os; os.chdir({repr(cfg.project_dir)}); '

@@ -5,11 +5,12 @@ ui/tabs/tab_pose2d.py - 2D Pose Estimation Tab
 import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QComboBox, QCheckBox, QFormLayout, QSplitter, QSpinBox
+    QComboBox, QCheckBox, QFormLayout, QSplitter, QSpinBox,
 )
 from PyQt5.QtCore import Qt
 
 from ui.components.widgets import PathPicker, StepRunWidget
+from ui.tabs.pose2d_preview import PosePreviewWidget
 from app.project import ProjectManager, StepStatus
 import sys
 from app.runner import ScriptWorker
@@ -36,7 +37,7 @@ class Pose2DTab(QWidget):
         desc.setObjectName("sectionDesc")
         outer.addWidget(desc)
 
-        splitter = QSplitter(Qt.Vertical)
+        self.splitter = QSplitter(Qt.Vertical)
 
         # Config
         config_widget = QWidget()
@@ -45,16 +46,22 @@ class Pose2DTab(QWidget):
         config_layout.setSpacing(12)
         config_layout.addWidget(self._build_estimator_group())
         config_layout.addWidget(self._build_video_group())
-        splitter.addWidget(config_widget)
+        self.splitter.addWidget(config_widget)
 
         # Run
         self.run_widget = StepRunWidget("Run 2D Pose Estimation")
         self.run_widget.run_requested.connect(self._run)
         self.run_widget.abort_requested.connect(self._abort)
-        splitter.addWidget(self.run_widget)
-        splitter.setSizes([350, 300])
+        self.splitter.addWidget(self.run_widget)
 
-        outer.addWidget(splitter)
+        # Inline pose preview (collapsed until estimation completes)
+        self.preview_widget = PosePreviewWidget()
+        self.splitter.addWidget(self.preview_widget)
+
+        # Start with preview pane collapsed
+        self.splitter.setSizes([300, 250, 0])
+
+        outer.addWidget(self.splitter)
 
     def _build_estimator_group(self):
         group = QGroupBox("Estimator Settings")
@@ -104,33 +111,54 @@ class Pose2DTab(QWidget):
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
 
-        info = QLabel("Place videos in each camera folder:\nproject/cam01/video.mp4\nproject/cam02/video.mp4 ...")
+        info = QLabel(
+            "Pose2Sim expects one video file per camera,\n"
+            "named cam01.mp4 … camNN.mp4, all placed flat\n"
+            "inside the project's videos/ folder:\n\n"
+            "  project/videos/cam01.mp4\n"
+            "  project/videos/cam02.mp4  …"
+        )
         info.setStyleSheet("color: #8b949e; font-size: 12px;")
         layout.addWidget(info)
 
-        self.cam_pickers_layout = QVBoxLayout()
-        layout.addLayout(self.cam_pickers_layout)
+        # Single folder picker that points at the videos/ directory
+        self.videos_picker = PathPicker(
+            label="videos/ folder:",
+            mode="dir",
+            placeholder="project/videos",
+        )
+        layout.addWidget(self.videos_picker)
+
+        # Per-camera file status labels (read-only, updated on project change)
+        self.cam_status_layout = QVBoxLayout()
+        layout.addLayout(self.cam_status_layout)
         layout.addStretch()
 
-        self.cam_pickers = []
+        self.cam_pickers = []   # kept for API compatibility
         return group
 
     def _on_project_changed(self, cfg):
-        # Clear and rebuild camera pickers
-        while self.cam_pickers_layout.count():
-            item = self.cam_pickers_layout.takeAt(0)
+        # Clear per-camera status labels
+        while self.cam_status_layout.count():
+            item = self.cam_status_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self.cam_pickers.clear()
 
-        for i in range(1, cfg.camera_count + 1):
-            picker = PathPicker(label=f"cam{i:02d}:", mode="dir",
-                                placeholder=f"Video folder for camera {i}")
-            if cfg.project_dir:
-                default = os.path.join(cfg.project_dir, f"cam{i:02d}")
-                picker.set_path(default)
-            self.cam_pickers.append(picker)
-            self.cam_pickers_layout.addWidget(picker)
+        if cfg.project_dir:
+            videos_dir = os.path.join(cfg.project_dir, "videos")
+            self.videos_picker.set_path(videos_dir)
+
+            for i in range(1, cfg.camera_count + 1):
+                expected = os.path.join(videos_dir, f"cam{i:02d}.mp4")
+                found = os.path.isfile(expected)
+                icon = "✓" if found else "✗"
+                color = "#7ee787" if found else "#f85149"
+                lbl = QLabel(f'<span style="color:{color};">{icon}</span>'
+                             f'  cam{i:02d}.mp4'
+                             + ("" if found else "  ← not found"))
+                lbl.setStyleSheet("font-size: 12px;")
+                self.cam_status_layout.addWidget(lbl)
 
         # Update estimator label
         self.estimator_label.setText(cfg.pose_estimator)
@@ -141,10 +169,33 @@ class Pose2DTab(QWidget):
         self.op_model.setEnabled(not is_rtmlib)
         self.op_scale.setEnabled(not is_rtmlib)
 
+        # Restore preview if this step was previously completed
+        if cfg.project_dir and self.pm.get_step_status(2) == StepStatus.DONE:
+            self.preview_widget.load(cfg.project_dir, cfg.camera_count)
+            self.splitter.setSizes([220, 180, 400])
+
     def _run(self):
         cfg = self.pm.config
         if not cfg.project_dir:
             self.run_widget.log.append("[ERROR] No project loaded.")
+            return
+
+        # Verify that expected video files exist before launching
+        videos_dir = os.path.join(cfg.project_dir, "videos")
+        missing = [
+            f"cam{i:02d}.mp4"
+            for i in range(1, cfg.camera_count + 1)
+            if not os.path.isfile(os.path.join(videos_dir, f"cam{i:02d}.mp4"))
+        ]
+        if missing:
+            self.run_widget.log.append(
+                f"[ERROR] Missing video files in {videos_dir}:\n"
+                + "\n".join(f"  {m}" for m in missing)
+            )
+            self.run_widget.log.append(
+                "[ERROR] Pose2Sim expects videos named cam01.mp4, cam02.mp4 … "
+                "placed directly inside the videos/ folder."
+            )
             return
 
         # Update config
@@ -155,7 +206,11 @@ class Pose2DTab(QWidget):
         self.run_widget.log.append(f"[INFO] Estimator: {cfg.pose_estimator}")
         self.run_widget.log.append(f"[INFO] Cameras: {cfg.camera_count}")
         if cfg.pose_estimator == "RTMLib":
-            self.run_widget.log.append(f"[INFO] Model: {cfg.rtmlib_model} | Backend: {self.rtmlib_backend.currentText()} | Device: {self.rtmlib_device.currentText()}")
+            self.run_widget.log.append(
+                f"[INFO] Model: {cfg.rtmlib_model} | "
+                f"Backend: {self.rtmlib_backend.currentText()} | "
+                f"Device: {self.rtmlib_device.currentText()}"
+            )
 
         cmd = [sys.executable, '-c',
                f'import os; os.chdir({repr(cfg.project_dir)}); '
@@ -176,3 +231,14 @@ class Pose2DTab(QWidget):
         self.run_widget.set_done(success, msg)
         if success:
             self.pm.set_step_status(2, StepStatus.DONE)
+            cfg = self.pm.config
+            self.preview_widget.load(cfg.project_dir, cfg.camera_count)
+            self.splitter.setSizes([220, 180, 400])
+
+    def hideEvent(self, event):
+        """Release VideoCapture resources when tab is hidden."""
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        self.preview_widget.cleanup()
+        super().closeEvent(event)
