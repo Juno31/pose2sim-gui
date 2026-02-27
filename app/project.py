@@ -126,6 +126,12 @@ class ProjectManager:
         if status == StepStatus.DONE and step_idx + 1 < len(self.config.step_status):
             if self.config.step_status[step_idx + 1] == StepStatus.LOCKED:
                 self.config.step_status[step_idx + 1] = StepStatus.READY
+        # Persist immediately so status survives app restarts
+        if self.config.project_dir:
+            try:
+                self.config.save()
+            except Exception:
+                pass
         self.notify()
 
     def get_step_status(self, step_idx: int) -> StepStatus:

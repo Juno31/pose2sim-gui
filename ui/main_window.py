@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QStatusBar, QFrame,
     QSizePolicy
 )
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QSettings
 from PyQt5.QtGui import QIcon, QFont
 
 from app.project import ProjectManager, StepStatus
@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.pm = ProjectManager()
+        self._settings = QSettings("PerfAnalytics", "Markerless")
         self.setWindowTitle("Markerless")
         self.setMinimumSize(1100, 750)
         self.resize(1280, 800)
@@ -133,8 +134,9 @@ class MainWindow(QMainWindow):
 
         self.pm.register_change_callback(self._on_project_changed)
 
-        # Start on Setup tab
-        self._go_to_step(0)
+        # Try to restore the last opened project; fall back to Setup tab
+        if not self._try_restore_last_project():
+            self._go_to_step(0)
 
     def _build_menu(self):
         menubar = self.menuBar()
@@ -297,9 +299,41 @@ class MainWindow(QMainWindow):
         )
         self.cam_info.setStyleSheet("color: #58a6ff; font-size: 11px; padding: 10px 16px;")
         self.run_all_btn.setEnabled(True)
-        self.status_bar.showMessage(f"Project '{cfg.project_name}' loaded — proceed to Calibration.")
-        # Go to calibration
-        self._go_to_step(1)
+
+        # Persist path so we can restore it next launch
+        config_path = os.path.join(cfg.project_dir, "markerless_config.json")
+        self._settings.setValue("last_project_path", config_path)
+
+        # Navigate to first step that still needs attention
+        target = self._first_actionable_step()
+        self.status_bar.showMessage(f"Project '{cfg.project_name}' loaded.")
+        self._go_to_step(target)
+
+    def _first_actionable_step(self) -> int:
+        """Return the index of the first READY or ERROR step, or the last DONE step."""
+        statuses = self.pm.config.step_status
+        for i, st in enumerate(statuses):
+            if StepStatus(st) in (StepStatus.READY, StepStatus.ERROR):
+                return i
+        # All steps are DONE (or unexpectedly all LOCKED) — go to last DONE
+        for i in range(len(statuses) - 1, -1, -1):
+            if StepStatus(statuses[i]) == StepStatus.DONE:
+                return i
+        return 0
+
+    def _try_restore_last_project(self) -> bool:
+        """Load the last project from QSettings. Returns True if successful."""
+        last_path = self._settings.value("last_project_path", "")
+        if not last_path or not os.path.isfile(last_path):
+            return False
+        try:
+            self.pm.load_project(last_path)
+            self._on_project_created()
+            return True
+        except Exception:
+            # Corrupt or moved project — clear the stored path
+            self._settings.remove("last_project_path")
+            return False
 
     def _on_project_changed(self, cfg):
         for i, btn in enumerate(self.step_buttons):
@@ -308,8 +342,11 @@ class MainWindow(QMainWindow):
             btn.set_enabled_nav(st != StepStatus.LOCKED)
 
     def _open_project_dialog(self):
+        # Start the browser in the last known project directory (if any)
+        last_path = self._settings.value("last_project_path", "")
+        start_dir = os.path.dirname(last_path) if last_path else ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project Config", "", "JSON Files (*.json)"
+            self, "Open Project Config", start_dir, "JSON Files (*.json)"
         )
         if path:
             try:
