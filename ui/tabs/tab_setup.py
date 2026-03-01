@@ -7,9 +7,10 @@ import shutil
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QGroupBox, QRadioButton, QButtonGroup,
-    QFileDialog, QMessageBox, QSpinBox, QFormLayout, QFrame
+    QFileDialog, QMessageBox, QSpinBox, QDoubleSpinBox,
+    QFormLayout, QFrame, QCheckBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
 from ui.components.widgets import PathPicker
 from app.project import ProjectManager, StepStatus
@@ -88,7 +89,6 @@ class SetupTab(QWidget):
         # Create button
         create_btn = QPushButton("Create Project")
         create_btn.setObjectName("primaryBtn")
-        create_btn.setFixedWidth(160)
         create_btn.clicked.connect(self._create_project)
         new_layout.addRow("", create_btn)
 
@@ -108,20 +108,18 @@ class SetupTab(QWidget):
 
         browse_btn = QPushButton("Browse")
         browse_btn.setObjectName("browseBtn")
-        browse_btn.setFixedWidth(80)
         browse_btn.clicked.connect(self._browse_existing_folder)
         folder_row.addWidget(browse_btn)
         open_outer.addLayout(folder_row)
 
         # Status hint (shows what was found in the folder)
         self.open_hint = QLabel("")
-        self.open_hint.setStyleSheet("color: #8b949e; font-size: 11px; padding-left: 2px;")
+        self.open_hint.setStyleSheet("color: #8b949e; padding-left: 2px;")
         open_outer.addWidget(self.open_hint)
 
         # Open button
         self.open_btn = QPushButton("Open Project")
         self.open_btn.setObjectName("primaryBtn")
-        self.open_btn.setFixedWidth(130)
         self.open_btn.setEnabled(False)
         self.open_btn.clicked.connect(self._open_existing_folder)
         open_outer.addWidget(self.open_btn, alignment=Qt.AlignLeft)
@@ -147,6 +145,51 @@ class SetupTab(QWidget):
         info_layout.addRow("Estimator:", self.info_estimator)
 
         layout.addWidget(info_group)
+
+        # ── Project Parameters ────────────────────────────────
+        params_group = QGroupBox("Project Parameters")
+        params_layout = QFormLayout(params_group)
+        params_layout.setSpacing(10)
+
+        self.multi_person = QCheckBox("Multi-person capture")
+        self.multi_person.setToolTip("Enable if multiple participants are in the scene")
+        params_layout.addRow(self.multi_person)
+
+        self.frame_rate_edit = QLineEdit("auto")
+        self.frame_rate_edit.setPlaceholderText("auto or integer (e.g. 60)")
+        self.frame_rate_edit.setToolTip("Frame rate in fps. 'auto' reads from video metadata.")
+        params_layout.addRow("Frame Rate:", self.frame_rate_edit)
+
+        self.frame_range_edit = QLineEdit("auto")
+        self.frame_range_edit.setPlaceholderText("auto, all, or [start, end] e.g. [10,300]")
+        self.frame_range_edit.setToolTip("Frame range to process. 'auto' trims to low-reprojection-error frames.")
+        params_layout.addRow("Frame Range:", self.frame_range_edit)
+
+        self.participant_height_edit = QLineEdit("auto")
+        self.participant_height_edit.setPlaceholderText("auto or meters (e.g. 1.72)")
+        self.participant_height_edit.setToolTip("Participant height in meters. Used for marker augmentation.")
+        params_layout.addRow("Height (m):", self.participant_height_edit)
+
+        self.participant_mass = QDoubleSpinBox()
+        self.participant_mass.setRange(10.0, 300.0)
+        self.participant_mass.setValue(70.0)
+        self.participant_mass.setSuffix(" kg")
+        self.participant_mass.setToolTip("Participant mass in kg. Used for scaling and kinematic analysis.")
+        params_layout.addRow("Mass (kg):", self.participant_mass)
+
+        # Save params button
+        params_btn_row = QHBoxLayout()
+        self.params_save_btn = QPushButton("💾  Save Config")
+        self.params_save_btn.setToolTip("Write project parameters to Config.toml")
+        self.params_save_btn.clicked.connect(self._save_project_params)
+        params_btn_row.addWidget(self.params_save_btn)
+        self.params_save_status = QLabel("")
+        self.params_save_status.setStyleSheet("color: #7ee787;")
+        params_btn_row.addWidget(self.params_save_status)
+        params_btn_row.addStretch()
+        params_layout.addRow(params_btn_row)
+
+        layout.addWidget(params_group)
         layout.addStretch()
 
         # Update display when project changes
@@ -177,20 +220,20 @@ class SetupTab(QWidget):
 
         if os.path.exists(config_path):
             self.open_hint.setText("✓ markerless_config.json found — project will be fully restored.")
-            self.open_hint.setStyleSheet("color: #7ee787; font-size: 11px; padding-left: 2px;")
+            self.open_hint.setStyleSheet("color: #7ee787; padding-left: 2px;")
         elif has_videos_dir or has_toml:
             self.open_hint.setText("✓ Pose2Sim project structure detected — project will be initialised.")
-            self.open_hint.setStyleSheet("color: #7ee787; font-size: 11px; padding-left: 2px;")
+            self.open_hint.setStyleSheet("color: #7ee787; padding-left: 2px;")
         elif cam_dirs:
             cam_dirs_sorted = sorted(cam_dirs)
             self.open_hint.setText(
                 f"⚠ No config file found, but camera folders detected: {', '.join(cam_dirs_sorted)}\n"
                 f"  Project will be initialized from this folder structure."
             )
-            self.open_hint.setStyleSheet("color: #e3b341; font-size: 11px; padding-left: 2px;")
+            self.open_hint.setStyleSheet("color: #e3b341; padding-left: 2px;")
         else:
             self.open_hint.setText("⚠ No config or camera folders found. An empty project will be created here.")
-            self.open_hint.setStyleSheet("color: #e3b341; font-size: 11px; padding-left: 2px;")
+            self.open_hint.setStyleSheet("color: #e3b341; padding-left: 2px;")
 
         self.open_btn.setEnabled(True)
 
@@ -279,8 +322,59 @@ class SetupTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to create project:\n{e}")
 
+    def load_from_toml(self, data: dict):
+        proj = data.get("project", {})
+
+        val = proj.get("multi_person")
+        if isinstance(val, bool):
+            self.multi_person.setChecked(val)
+
+        val = proj.get("frame_rate")
+        if val is not None:
+            self.frame_rate_edit.setText(str(val))
+
+        val = proj.get("frame_range")
+        if val is not None:
+            self.frame_range_edit.setText(str(val))
+
+        val = proj.get("participant_height")
+        if val is not None:
+            self.participant_height_edit.setText(str(val))
+
+        val = proj.get("participant_mass")
+        if isinstance(val, (int, float)):
+            self.participant_mass.setValue(float(val))
+
+    def _save_project_params(self):
+        cfg = self.pm.config
+        if not cfg.project_dir:
+            self.params_save_status.setText("✗ No project loaded")
+            self.params_save_status.setStyleSheet("color: #f85149;")
+            return
+        from app.toml_bridge import save_toml_values
+        fr_text = self.frame_rate_edit.text().strip()
+        try:
+            fr_val = int(fr_text) if fr_text != "auto" else "auto"
+        except ValueError:
+            fr_val = fr_text
+        save_toml_values(cfg.project_dir, [
+            ("project", "multi_person",       self.multi_person.isChecked()),
+            ("project", "frame_rate",         fr_val),
+            ("project", "frame_range",        self.frame_range_edit.text().strip()),
+            ("project", "participant_height", self.participant_height_edit.text().strip()),
+            ("project", "participant_mass",   self.participant_mass.value()),
+        ])
+        self.params_save_status.setText("✓ Saved")
+        self.params_save_status.setStyleSheet("color: #7ee787;")
+        QTimer.singleShot(3000, lambda: self.params_save_status.setText(""))
+
     def _refresh_info(self, cfg):
         self.info_name.setText(cfg.project_name or "—")
         self.info_dir.setText(cfg.project_dir or "—")
         self.info_cameras.setText(str(cfg.camera_count) if cfg.project_name else "—")
         self.info_estimator.setText(cfg.pose_estimator if cfg.project_name else "—")
+        if cfg.project_dir:
+            from app.toml_bridge import load_toml
+            data = load_toml(cfg.project_dir)
+            if data:
+                self.load_from_toml(data)

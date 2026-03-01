@@ -35,7 +35,6 @@ class PathPicker(QWidget):
 
         btn = QPushButton("Browse")
         btn.setObjectName("browseBtn")
-        btn.setFixedWidth(80)
         btn.clicked.connect(self._browse)
         layout.addWidget(btn)
 
@@ -67,12 +66,11 @@ class LogWidget(QWidget):
 
         header = QHBoxLayout()
         lbl = QLabel("Console Output")
-        lbl.setStyleSheet("color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;")
+        lbl.setStyleSheet("color: #8b949e; text-transform: uppercase; letter-spacing: 1px;")
         header.addWidget(lbl)
         header.addStretch()
 
         clear_btn = QPushButton("Clear")
-        clear_btn.setFixedSize(60, 24)
         clear_btn.clicked.connect(self.clear)
         header.addWidget(clear_btn)
 
@@ -123,19 +121,17 @@ class StepRunWidget(QWidget):
         ctrl = QHBoxLayout()
         self.run_btn = QPushButton(run_label)
         self.run_btn.setObjectName("primaryBtn")
-        self.run_btn.setFixedHeight(36)
         self.run_btn.clicked.connect(self.run_requested.emit)
         ctrl.addWidget(self.run_btn)
 
         self.abort_btn = QPushButton("Abort")
         self.abort_btn.setObjectName("dangerBtn")
-        self.abort_btn.setFixedHeight(36)
         self.abort_btn.setEnabled(False)
         self.abort_btn.clicked.connect(self.abort_requested.emit)
         ctrl.addWidget(self.abort_btn)
 
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: #8b949e; font-size: 12px;")
+        self.status_label.setStyleSheet("color: #8b949e;")
         ctrl.addWidget(self.status_label)
         ctrl.addStretch()
         layout.addLayout(ctrl)
@@ -155,20 +151,20 @@ class StepRunWidget(QWidget):
         self.abort_btn.setEnabled(running)
         if running:
             self.status_label.setText("Running...")
-            self.status_label.setStyleSheet("color: #e3b341; font-size: 12px;")
+            self.status_label.setStyleSheet("color: #e3b341;")
             self.progress.setValue(0)
         else:
-            self.status_label.setStyleSheet("color: #8b949e; font-size: 12px;")
+            self.status_label.setStyleSheet("color: #8b949e;")
 
     def set_done(self, success: bool, msg: str = ""):
         self.set_running(False)
         if success:
             self.status_label.setText("✓ Done")
-            self.status_label.setStyleSheet("color: #7ee787; font-size: 12px;")
+            self.status_label.setStyleSheet("color: #7ee787;")
             self.progress.setValue(100)
         else:
             self.status_label.setText(f"✗ Failed: {msg[:60]}")
-            self.status_label.setStyleSheet("color: #f85149; font-size: 12px;")
+            self.status_label.setStyleSheet("color: #f85149;")
 
     def log_message(self, msg: str):
         self.log.append(msg)

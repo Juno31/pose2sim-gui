@@ -59,11 +59,6 @@ def main():
     app.setApplicationName("Markerless")
     app.setOrganizationName("PerfAnalytics")
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    qss_path = os.path.join(base_dir, "ui", "assets", "style.qss")
-    with open(qss_path, "r") as f:
-        app.setStyleSheet(f.read())
-
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

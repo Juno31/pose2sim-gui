@@ -3,13 +3,14 @@ ui/main_window.py - Main application window with sidebar navigation
 """
 
 import os
+import re
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QStackedWidget, QAction,
     QFileDialog, QMessageBox, QStatusBar, QFrame,
-    QSizePolicy
+    QSizePolicy, QApplication
 )
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QSettings
 from PyQt5.QtGui import QIcon, QFont
 
 from app.project import ProjectManager, StepStatus
@@ -90,7 +91,7 @@ class SidebarButton(QWidget):
         }
         icon, color = icons.get(status, ("?", "#8b949e"))
         self.status_lbl.setText(icon)
-        self.status_lbl.setStyleSheet(f"color: {color}; font-size: 13px;")
+        self.status_lbl.setStyleSheet(f"color: {color};")
 
     def _apply_style(self):
         if self._active:
@@ -120,21 +121,36 @@ class SidebarButton(QWidget):
 
 
 class MainWindow(QMainWindow):
+    DEFAULT_FONT_SIZE = 13
+    MIN_FONT_SIZE = 9
+    MAX_FONT_SIZE = 22
+
     def __init__(self):
         super().__init__()
         self.pm = ProjectManager()
+        self._settings = QSettings("PerfAnalytics", "Markerless")
         self.setWindowTitle("Markerless")
         self.setMinimumSize(1100, 750)
         self.resize(1280, 800)
+
+        self._qss_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "assets", "style.qss"
+        )
+
+        settings = QSettings("PerfAnalytics", "Markerless")
+        self._font_size = settings.value("font_size", self.DEFAULT_FONT_SIZE, type=int)
 
         self._build_menu()
         self._build_ui()
         self._build_status_bar()
 
+        self._apply_font_size(self._font_size, save=False)
+
         self.pm.register_change_callback(self._on_project_changed)
 
-        # Start on Setup tab
+        # Start on Setup tab, then try to restore last project
         self._go_to_step(0)
+        self._try_restore_last_project()
 
     def _build_menu(self):
         menubar = self.menuBar()
@@ -169,6 +185,9 @@ class MainWindow(QMainWindow):
         quit_act.triggered.connect(self.close)
         file_menu.addAction(quit_act)
 
+        view_menu = menubar.addMenu("View")
+        self._build_view_menu(view_menu)
+
         help_menu = menubar.addMenu("Help")
         docs_act = QAction("Pose2Sim Documentation", self)
         docs_act.triggered.connect(lambda: self._open_url("https://github.com/perfanalytics/pose2sim"))
@@ -186,7 +205,8 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
 
         # ── Sidebar ──────────────────────────────────────────
-        sidebar = QWidget()
+        self.sidebar = QWidget()
+        sidebar = self.sidebar
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(220)
         sidebar_layout = QVBoxLayout(sidebar)
@@ -198,13 +218,13 @@ class MainWindow(QMainWindow):
         logo_layout = QVBoxLayout(logo_container)
         logo_layout.setContentsMargins(16, 20, 16, 16)
 
-        logo = QLabel("POSE2SIM")
-        logo.setStyleSheet("color: #58a6ff; font-size: 16px; font-weight: bold; letter-spacing: 2px;")
-        logo_layout.addWidget(logo)
+        self.logo_lbl = QLabel("POSE2SIM")
+        self.logo_lbl.setStyleSheet("color: #58a6ff; font-size: 16px; font-weight: bold; letter-spacing: 2px;")
+        logo_layout.addWidget(self.logo_lbl)
 
-        sub = QLabel("3D Pose Pipeline GUI")
-        sub.setStyleSheet("color: #8b949e; font-size: 10px;")
-        logo_layout.addWidget(sub)
+        self.sub_lbl = QLabel("3D Pose Pipeline GUI")
+        self.sub_lbl.setStyleSheet("color: #8b949e; font-size: 10px;")
+        logo_layout.addWidget(self.sub_lbl)
 
         sidebar_layout.addWidget(logo_container)
 
@@ -242,7 +262,6 @@ class MainWindow(QMainWindow):
 
         self.run_all_btn = QPushButton("▶  Run All Steps")
         self.run_all_btn.setObjectName("primaryBtn")
-        self.run_all_btn.setFixedHeight(38)
         self.run_all_btn.setEnabled(False)
         self.run_all_btn.setToolTip("Run the full pipeline after project setup")
         run_all_layout.addWidget(self.run_all_btn)
@@ -270,6 +289,81 @@ class MainWindow(QMainWindow):
 
         root.addWidget(self.stack)
 
+    def _build_view_menu(self, view_menu):
+        increase_act = QAction("Increase Font Size", self)
+        increase_act.setShortcut("Ctrl+=")
+        increase_act.triggered.connect(lambda: self._apply_font_size(self._font_size + 1))
+        view_menu.addAction(increase_act)
+
+        decrease_act = QAction("Decrease Font Size", self)
+        decrease_act.setShortcut("Ctrl+-")
+        decrease_act.triggered.connect(lambda: self._apply_font_size(self._font_size - 1))
+        view_menu.addAction(decrease_act)
+
+        reset_act = QAction("Reset Font Size", self)
+        reset_act.setShortcut("Ctrl+0")
+        reset_act.triggered.connect(lambda: self._apply_font_size(self.DEFAULT_FONT_SIZE))
+        view_menu.addAction(reset_act)
+
+        view_menu.addSeparator()
+
+        presets_menu = view_menu.addMenu("Font Size Presets")
+        for label, size in [
+            ("Small  (11px)",      11),
+            ("Medium (13px)",      13),
+            ("Large  (15px)",      15),
+            ("Extra Large (18px)", 18),
+        ]:
+            act = QAction(label, self)
+            act.triggered.connect(lambda checked, s=size: self._apply_font_size(s))
+            presets_menu.addAction(act)
+
+    def _apply_font_size(self, size: int, save: bool = True):
+        size = max(self.MIN_FONT_SIZE, min(self.MAX_FONT_SIZE, size))
+        self._font_size = size
+
+        with open(self._qss_path, "r") as f:
+            qss = f.read()
+
+        def scale(m):
+            orig = int(m.group(1))
+            scaled = max(8, round(orig * size / self.DEFAULT_FONT_SIZE))
+            return f"font-size: {scaled}px"
+
+        QApplication.instance().setStyleSheet(
+            re.sub(r"font-size:\s*(\d+)px", scale, qss)
+        )
+
+        self._update_inline_font_sizes(size)
+
+        if save:
+            QSettings("PerfAnalytics", "Markerless").setValue("font_size", size)
+            if hasattr(self, "status_bar"):
+                self.status_bar.showMessage(f"Font size: {size}px", 2000)
+
+    def _update_inline_font_sizes(self, size: int):
+        ratio = size / self.DEFAULT_FONT_SIZE
+        if hasattr(self, "logo_lbl"):
+            s = max(8, round(16 * ratio))
+            self.logo_lbl.setStyleSheet(
+                f"color: #58a6ff; font-size: {s}px; font-weight: bold; letter-spacing: 2px;"
+            )
+        if hasattr(self, "sub_lbl"):
+            s = max(8, round(10 * ratio))
+            self.sub_lbl.setStyleSheet(f"color: #8b949e; font-size: {s}px;")
+        if hasattr(self, "cam_info"):
+            s = max(8, round(11 * ratio))
+            color = "#58a6ff" if self.pm.config.project_name else "#8b949e"
+            self.cam_info.setStyleSheet(
+                f"color: {color}; font-size: {s}px; padding: 10px 16px;"
+            )
+        # Scale sidebar width and step button heights with font size
+        if hasattr(self, "sidebar"):
+            self.sidebar.setFixedWidth(max(180, round(220 * ratio)))
+        if hasattr(self, "step_buttons"):
+            for btn in self.step_buttons:
+                btn.setFixedHeight(max(36, round(44 * ratio)))
+
     def _build_status_bar(self):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -295,11 +389,32 @@ class MainWindow(QMainWindow):
             f"📁 {cfg.project_name}\n"
             f"📷 {cfg.camera_count} cameras  •  {cfg.pose_estimator}"
         )
-        self.cam_info.setStyleSheet("color: #58a6ff; font-size: 11px; padding: 10px 16px;")
+        cam_size = max(8, round(11 * self._font_size / self.DEFAULT_FONT_SIZE))
+        self.cam_info.setStyleSheet(f"color: #58a6ff; font-size: {cam_size}px; padding: 10px 16px;")
         self.run_all_btn.setEnabled(True)
         self.status_bar.showMessage(f"Project '{cfg.project_name}' loaded — proceed to Calibration.")
+        # Save as last project for auto-restore on next launch
+        QSettings("PerfAnalytics", "Markerless").setValue("last_project_dir", cfg.project_dir)
         # Go to calibration
         self._go_to_step(1)
+
+    def _try_restore_last_project(self):
+        """On startup, silently re-open the last used project if it still exists."""
+        settings = QSettings("PerfAnalytics", "Markerless")
+        last_dir = settings.value("last_project_dir", "")
+        if not last_dir or not os.path.isdir(last_dir):
+            return
+        config_path = os.path.join(last_dir, "markerless_config.json")
+        if not os.path.exists(config_path):
+            return
+        try:
+            self.pm.load_project(config_path)
+            self._on_project_created()
+            self.status_bar.showMessage(
+                f"Restored last project: {self.pm.config.project_name}"
+            )
+        except Exception:
+            pass  # If restore fails, start fresh silently
 
     def _on_project_changed(self, cfg):
         for i, btn in enumerate(self.step_buttons):
@@ -308,8 +423,11 @@ class MainWindow(QMainWindow):
             btn.set_enabled_nav(st != StepStatus.LOCKED)
 
     def _open_project_dialog(self):
+        # Start the browser in the last known project directory (if any)
+        last_path = self._settings.value("last_project_path", "")
+        start_dir = os.path.dirname(last_path) if last_path else ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project Config", "", "JSON Files (*.json)"
+            self, "Open Project Config", start_dir, "JSON Files (*.json)"
         )
         if path:
             try:
