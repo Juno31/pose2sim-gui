@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pose2Sim</title>
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <nav id="sidebar">
+    <div class="sidebar-brand">Pose2Sim</div>
+    <div id="project-info" class="sidebar-project">No project loaded</div>
+    <ul class="sidebar-nav">
+      <li><button class="nav-item active" data-step="0"><span class="nav-num">0</span>Setup<span class="nav-badge" id="status-0"></span></button></li>
+      <li><button class="nav-item" data-step="1" disabled><span class="nav-num">1</span>Calibration<span class="nav-badge" id="status-1"></span></button></li>
+      <li><button class="nav-item" data-step="2" disabled><span class="nav-num">2</span>Processing<span class="nav-badge" id="status-2"></span></button></li>
+      <li><button class="nav-item" data-step="3" disabled><span class="nav-num">3</span>Visualization<span class="nav-badge" id="status-3"></span></button></li>
+    </ul>
+  </nav>
+
+  <!-- Main -->
+  <main id="content">
+
+    <!-- ════ PAGE 0: SETUP ════ -->
+    <section class="tab active" id="tab-0">
+      <header class="tab-header"><h1>Setup</h1></header>
+
+      <div class="section">
+        <h2>New Project</h2>
+        <div class="field"><label>Name</label><input type="text" id="new-project-name" placeholder="e.g. taekwondo_trial_01"></div>
+        <div class="field"><label>Directory</label><div class="input-group"><input type="text" id="new-project-dir" readonly placeholder="Select..."><button class="btn-ghost" onclick="App.browseNewProjectDir()">Browse</button></div></div>
+        <div class="field"><label>Cameras</label><div class="seg-control"><label class="seg"><input type="radio" name="cam-count" value="2" checked><span>2</span></label><label class="seg"><input type="radio" name="cam-count" value="3"><span>3</span></label><label class="seg"><input type="radio" name="cam-count" value="4"><span>4</span></label></div></div>
+        <div class="field"><label>Estimator</label><div class="seg-control"><label class="seg"><input type="radio" name="estimator" value="RTMLib" checked><span>RTMLib</span></label><label class="seg"><input type="radio" name="estimator" value="OpenPose"><span>OpenPose</span></label></div></div>
+        <button class="btn" onclick="App.createProject()">Create Project</button>
+      </div>
+
+      <div class="section">
+        <h2>Open Project</h2>
+        <div class="field"><label>Folder</label><div class="input-group"><input type="text" id="open-project-dir" readonly placeholder="Select project folder..."><button class="btn-ghost" onclick="App.browseOpenProject()">Browse</button></div></div>
+        <button class="btn" onclick="App.openProject()">Open</button>
+      </div>
+
+      <div class="section" id="project-params-card" style="display:none;">
+        <h2>Parameters</h2>
+        <div class="grid-2">
+          <div class="field"><label>Multi-person</label><input type="checkbox" id="cfg-multi-person"></div>
+          <div class="field"><label>Frame rate</label><input type="text" id="cfg-frame-rate" value="auto"></div>
+          <div class="field"><label>Frame range</label><input type="text" id="cfg-frame-range" value="auto"></div>
+          <div class="field"><label>Height (m)</label><input type="text" id="cfg-height" value="auto"></div>
+          <div class="field"><label>Mass (kg)</label><input type="number" id="cfg-mass" value="70.0" min="10" max="300" step="0.1"></div>
+        </div>
+        <button class="btn-subtle" onclick="App.saveProjectParams()">Save</button>
+      </div>
+    </section>
+
+    <!-- ════ PAGE 1: CALIBRATION ════ -->
+    <section class="tab" id="tab-1">
+      <header class="tab-header"><h1>Calibration</h1></header>
+
+      <div class="section">
+        <h2>Intrinsic</h2>
+        <div class="grid-2">
+          <div class="field"><label>Columns</label><input type="number" id="cal-int-cols" value="6" min="3" max="20"></div>
+          <div class="field"><label>Rows</label><input type="number" id="cal-int-rows" value="9" min="3" max="20"></div>
+          <div class="field"><label>Square size (mm)</label><input type="number" id="cal-int-square" value="40.0" step="0.1"></div>
+          <div class="field"><label>Extract every (s)</label><input type="number" id="cal-int-extract" value="1.0" step="0.1"></div>
+          <div class="field"><label>Extension</label><select id="cal-int-ext"><option>jpg</option><option>png</option><option>mp4</option><option>avi</option><option>mov</option></select></div>
+          <div class="field"><label>Overwrite</label><input type="checkbox" id="cal-int-overwrite"></div>
+          <div class="field"><label>Show detection</label><input type="checkbox" id="cal-int-show" checked></div>
+        </div>
+        <div class="step-actions">
+          <button class="btn-subtle" onclick="App.saveCalibrationConfig()">Save</button>
+          <button class="btn" onclick="App.runStep('calibration')">Run Intrinsics Only</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Extrinsic — Scene Calibration</h2>
+        <div class="grid-2">
+          <div class="field"><label>Method</label><select id="cal-ext-method"><option>scene</option><option>board</option></select></div>
+          <div class="field"><label>Extension</label><select id="cal-ext-ext"><option>png</option><option>jpg</option><option selected>mp4</option><option>avi</option><option>mov</option></select></div>
+          <div class="field"><label>Show reproj. error</label><input type="checkbox" id="cal-ext-reproj" checked></div>
+          <div class="field"><label>Save debug images</label><input type="checkbox" id="cal-debug-images" checked></div>
+        </div>
+
+        <!-- In-window extrinsic calibration -->
+        <div id="calib-clicker" class="calib-clicker" style="display:none;">
+          <div class="calib-toolbar">
+            <span class="calib-cam-label" id="calib-cam-label">Camera 1 / 4</span>
+            <span class="calib-point-count" id="calib-point-count">0 / 10 points</span>
+            <button class="btn-ghost" onclick="Calib.undoPoint()">Undo</button>
+            <button class="btn-ghost" onclick="Calib.skipCamera()">Skip</button>
+            <button class="btn" onclick="Calib.confirmCamera()" id="calib-confirm-btn" disabled>Confirm</button>
+          </div>
+          <div class="calib-layout">
+            <div class="calib-canvas-wrap">
+              <canvas id="calib-canvas"></canvas>
+              <div class="calib-hint" id="calib-hint">Click the 3D reference points in order. Left-click to place, right-click to undo.</div>
+            </div>
+            <div class="calib-objpts" id="calib-objpts">
+              <div class="calib-objpts-title">3D Reference Points</div>
+              <div id="calib-objpts-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step-actions">
+          <button class="btn-subtle" onclick="App.saveCalibrationConfig()">Save</button>
+          <button class="btn" onclick="Calib.startExtrinsic()" id="btn-start-extrinsic">Click Extrinsic Points</button>
+          <button class="btn" onclick="Calib.finishCalibration()" id="btn-finish-calib" style="display:none">Compute Calibration</button>
+        </div>
+      </div>
+
+      <!-- Calibration results card -->
+      <div class="section calib-results-card" id="calib-results-card" style="display:none;">
+        <h2>Calibration Results</h2>
+        <div class="calib-results-grid" id="calib-results-grid"></div>
+        <div class="calib-results-summary" id="calib-results-summary"></div>
+      </div>
+
+      <div class="section section-run">
+        <div class="run-bar">
+          <button class="btn-danger" onclick="App.abortStep()" style="display:none" id="abort-calibration">Abort</button>
+          <span class="run-status" id="run-status-calibration"></span>
+        </div>
+        <div class="progress"><div class="progress-bar" id="progress-calibration"></div></div>
+        <pre class="console" id="log-calibration"></pre>
+      </div>
+    </section>
+
+    <!-- ════ PAGE 2: PROCESSING ════ -->
+    <section class="tab" id="tab-2">
+      <header class="tab-header"><h1>Processing</h1></header>
+
+      <!-- 2D Pose -->
+      <details class="step-details" open>
+        <summary class="step-summary">
+          <span class="step-summary-title">2D Pose Estimation</span>
+          <span class="step-summary-badge" id="sub-status-pose"></span>
+        </summary>
+        <div class="step-body">
+          <div class="grid-2">
+            <div class="field"><label>Pose model</label><select id="pose-model"><option value="Body_with_feet">Body (HALPE_26)</option><option value="Whole_body_wrist">Whole Body + Wrist</option><option value="Whole_body">Whole Body</option><option value="Body">Body (COCO_17)</option><option value="Hand">Hand</option><option value="Face">Face</option></select></div>
+            <div class="field"><label>Mode</label><select id="pose-mode"><option>lightweight</option><option>balanced</option><option>performance</option></select></div>
+            <div class="field"><label>Backend</label><select id="pose-backend"><option>auto</option><option>onnxruntime</option><option>opencv</option><option>openvino</option></select></div>
+            <div class="field"><label>Device</label><select id="pose-device"><option>auto</option><option value="cpu">CPU</option><option value="cuda">CUDA</option><option value="mps">MPS</option></select></div>
+            <div class="field"><label>Det. frequency</label><input type="number" id="pose-det-freq" value="4" min="1" max="60"></div>
+            <div class="field"><label>Tracking</label><select id="pose-tracking"><option>sports2d</option><option>none</option><option>deepsort</option></select></div>
+            <div class="field"><label>Video ext.</label><select id="pose-vid-ext"><option>mp4</option><option>avi</option><option>mov</option></select></div>
+            <div class="field"><label>Overwrite</label><input type="checkbox" id="pose-overwrite"></div>
+            <div class="field"><label>Display</label><input type="checkbox" id="pose-display" checked></div>
+          </div>
+          <div class="field" style="margin-top:12px;"><label>Videos folder</label><div class="input-group"><input type="text" id="pose-videos-dir" readonly placeholder="Auto-detected..."><button class="btn-ghost" onclick="App.browseVideosDir()">Browse</button><button class="btn-ghost" onclick="App.refreshCameraVideos()">Refresh</button></div></div>
+          <div id="camera-video-list" class="file-list"></div>
+
+          <!-- Live pose preview -->
+          <div id="pose-preview-wrap" class="pose-preview-wrap" style="display:none;">
+            <div class="pose-preview-header">
+              <span class="pose-preview-title">Live Preview</span>
+              <span class="pose-preview-info" id="pose-preview-info"></span>
+            </div>
+            <img id="pose-preview-img" class="pose-preview-img" alt="Pose preview">
+            <div class="pose-preview-progress">
+              <div class="pose-preview-progress-bar" id="pose-preview-bar" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="step-actions">
+            <button class="btn-subtle" onclick="App.savePoseConfig()">Save</button>
+            <button class="btn" onclick="App.runStep('poseEstimation')">Run</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- Synchronization -->
+      <details class="step-details" open>
+        <summary class="step-summary">
+          <span class="step-summary-title">Synchronization</span>
+          <span class="step-summary-badge" id="sub-status-sync"></span>
+        </summary>
+        <div class="step-body">
+          <div class="grid-2">
+            <div class="field"><label>Peak motion time (s)</label><input type="number" id="sync-peak-time" value="0.5" step="0.1"></div>
+            <div class="field"><label>Search range (s)</label><input type="number" id="sync-range" value="2.0" step="0.1"></div>
+            <div class="field"><label>Filter cutoff (Hz)</label><input type="number" id="sync-cutoff" value="6.0" step="0.5"></div>
+            <div class="field"><label>Filter order</label><input type="number" id="sync-order" value="4" min="1" max="10"></div>
+            <div class="field"><label>Likelihood threshold</label><input type="number" id="sync-likelihood" value="0.4" step="0.05"></div>
+            <div class="field"><label>Keypoints</label><input type="text" id="sync-keypoints" value="all"></div>
+            <div class="field"><label>Display plots</label><input type="checkbox" id="sync-display" checked></div>
+            <div class="field"><label>Save plots</label><input type="checkbox" id="sync-save" checked></div>
+            <div class="field"><label>Interactive GUI</label><input type="checkbox" id="sync-gui" checked></div>
+          </div>
+          <div class="step-actions">
+            <button class="btn-subtle" onclick="App.saveSyncConfig()">Save</button>
+            <button class="btn" onclick="App.runStep('synchronization')">Run</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- Triangulation -->
+      <details class="step-details" open>
+        <summary class="step-summary">
+          <span class="step-summary-title">Triangulation</span>
+          <span class="step-summary-badge" id="sub-status-triang"></span>
+        </summary>
+        <div class="step-body">
+          <div class="grid-2">
+            <div class="field"><label>Reproj. error (px)</label><input type="number" id="tri-reproj" value="15.0" step="0.5"></div>
+            <div class="field"><label>Likelihood threshold</label><input type="number" id="tri-likelihood" value="0.3" step="0.05"></div>
+            <div class="field"><label>Min cameras</label><input type="number" id="tri-min-cams" value="2" min="2" max="8"></div>
+            <div class="field"><label>Interpolation</label><select id="tri-interp"><option>linear</option><option>slinear</option><option>quadratic</option><option>cubic</option><option>none</option></select></div>
+            <div class="field"><label>Max gap</label><input type="number" id="tri-max-gap" value="20" min="1" max="200"></div>
+            <div class="field"><label>Fill large gaps</label><select id="tri-fill-gaps"><option>last_value</option><option>nan</option><option>zeros</option></select></div>
+            <div class="field"><label>Make C3D</label><input type="checkbox" id="tri-c3d" checked></div>
+            <div class="field"><label>Remove incomplete</label><input type="checkbox" id="tri-remove-incomplete"></div>
+          </div>
+          <div class="step-actions">
+            <button class="btn-subtle" onclick="App.saveTriangConfig()">Save</button>
+            <button class="btn" onclick="App.runStep('triangulation')">Run</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- Filtering -->
+      <details class="step-details" open>
+        <summary class="step-summary">
+          <span class="step-summary-title">Filtering</span>
+          <span class="step-summary-badge" id="sub-status-filt"></span>
+        </summary>
+        <div class="step-body">
+          <div class="grid-2">
+            <div class="field"><label>Enable</label><input type="checkbox" id="filt-enable" checked></div>
+            <div class="field"><label>Type</label><select id="filt-type" onchange="App.onFilterTypeChange()"><option>butterworth</option><option>kalman</option><option>gcv_spline</option><option>gaussian</option><option>LOESS</option><option>median</option><option>butterworth_on_speed</option></select></div>
+            <div class="field"><label>Reject outliers</label><input type="checkbox" id="filt-outliers" checked></div>
+            <div class="field"><label>Display</label><input type="checkbox" id="filt-display"></div>
+            <div class="field"><label>Make C3D</label><input type="checkbox" id="filt-c3d" checked></div>
+          </div>
+
+          <div id="filt-butterworth-params" class="filter-sub">
+            <div class="grid-2">
+              <div class="field"><label>Cutoff (Hz)</label><input type="number" id="filt-bw-cutoff" value="6.0" step="0.5"></div>
+              <div class="field"><label>Order</label><input type="number" id="filt-bw-order" value="4" min="1" max="10"></div>
+            </div>
+          </div>
+          <div id="filt-kalman-params" class="filter-sub" style="display:none;">
+            <div class="grid-2">
+              <div class="field"><label>Trust ratio</label><input type="number" id="filt-kalman-trust" value="500" min="1" max="5000"></div>
+              <div class="field"><label>Smooth</label><input type="checkbox" id="filt-kalman-smooth" checked></div>
+            </div>
+          </div>
+          <div id="filt-gaussian-params" class="filter-sub" style="display:none;">
+            <div class="field"><label>Sigma kernel</label><input type="number" id="filt-gauss-sigma" value="1" min="1" max="100"></div>
+          </div>
+          <div id="filt-loess-params" class="filter-sub" style="display:none;">
+            <div class="field"><label>Nb values</label><input type="number" id="filt-loess-nb" value="5" min="3" max="200"></div>
+          </div>
+          <div id="filt-median-params" class="filter-sub" style="display:none;">
+            <div class="field"><label>Kernel size</label><input type="number" id="filt-median-kernel" value="3" min="3" max="51" step="2"></div>
+          </div>
+
+          <div class="step-actions">
+            <button class="btn-subtle" onclick="App.saveFilterConfig()">Save</button>
+            <button class="btn" onclick="App.runStep('filtering')">Run</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- Shared console for Processing page -->
+      <div class="section section-run">
+        <div class="run-bar">
+          <button class="btn-danger" onclick="App.abortStep()" style="display:none" id="abort-processing">Abort</button>
+          <span class="run-status" id="run-status-processing"></span>
+        </div>
+        <div class="progress"><div class="progress-bar" id="progress-processing"></div></div>
+        <pre class="console" id="log-processing"></pre>
+      </div>
+    </section>
+
+    <!-- ════ PAGE 3: VISUALIZATION ════ -->
+    <section class="tab" id="tab-3">
+      <header class="tab-header"><h1>Visualization</h1></header>
+
+      <div class="section">
+        <h2>TRC Files</h2>
+        <select id="viz-trc-select" class="full-width" onchange="App.onTrcSelected()"><option value="">No files found</option></select>
+        <div id="viz-trc-info" class="trc-info" style="display:none;">
+          <div class="trc-meta">
+            <span id="viz-trc-frames"></span>
+            <span id="viz-trc-rate"></span>
+            <span id="viz-trc-units"></span>
+          </div>
+          <div class="trc-markers" id="viz-trc-markers"></div>
+        </div>
+        <p class="hint" id="viz-trc-empty">Select a TRC file to view markers</p>
+      </div>
+
+      <!-- 3D Viewer -->
+      <div class="section" id="viz-3d-section" style="display:none;">
+        <h2>3D Viewer</h2>
+        <div class="viewer-3d-wrap">
+          <div id="viewer-3d" class="viewer-3d"></div>
+        </div>
+        <div class="viewer-controls">
+          <button class="btn-ghost" onclick="Viewer3D.prevFrame()">&#9664;</button>
+          <input type="range" id="viewer-slider" min="0" max="0" value="0" class="viewer-slider" oninput="Viewer3D.seekFrame(this.value)">
+          <button class="btn-ghost" onclick="Viewer3D.nextFrame()">&#9654;</button>
+          <button class="btn-ghost" id="viewer-play-btn" onclick="Viewer3D.togglePlay()">&#9654; Play</button>
+          <span class="viewer-frame-label" id="viewer-frame-label">Frame 0 / 0</span>
+          <select id="viewer-speed" class="viewer-speed" onchange="Viewer3D.setSpeed(this.value)">
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Marker Augmentation</h2>
+        <div class="grid-2">
+          <div class="field"><label>Feet on floor</label><input type="checkbox" id="viz-feet-floor"></div>
+          <div class="field"><label>Make C3D</label><input type="checkbox" id="viz-c3d" checked></div>
+        </div>
+        <div class="hint" style="margin-top:12px;">
+          Required markers: Neck, RShoulder, LShoulder, RHip, LHip, RKnee, LKnee, RAnkle, LAnkle, RHeel, LHeel, RSmallToe, LSmallToe, RBigToe, LBigToe, RElbow, LElbow, RWrist, LWrist
+        </div>
+      </div>
+
+      <div class="section section-run">
+        <div class="run-bar">
+          <button class="btn-subtle" onclick="App.saveVizConfig()">Save</button>
+          <button class="btn" onclick="App.runStep('markerAugmentation')">Run Augmentation</button>
+          <button class="btn-danger" onclick="App.abortStep()" style="display:none" id="abort-visualization">Abort</button>
+          <span class="run-status" id="run-status-visualization"></span>
+        </div>
+        <div class="progress"><div class="progress-bar" id="progress-visualization"></div></div>
+        <pre class="console" id="log-visualization"></pre>
+      </div>
+    </section>
+
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
