@@ -1,249 +1,345 @@
-# 🏃 Markerless
+# Pose2Sim GUI — Markerless 3D Motion Capture
 
-> A **PyQt5 desktop application** that wraps the [Pose2Sim](https://github.com/perfanalytics/pose2sim) 3D markerless motion capture pipeline in an intuitive, step-by-step GUI.
-
-No more editing TOML configs by hand — just point, click, and run.
+A desktop application that wraps the [Pose2Sim](https://github.com/perfanalytics/pose2sim) markerless motion capture pipeline in a visual, step-by-step interface. Built for researchers who want to process multi-camera video into 3D motion data without editing config files by hand.
 
 ---
 
-## ✨ Features
+## What This App Does
 
-| Feature | Details |
-|---|---|
-| **Dark scientific UI** | GitHub-dark themed, optimized for long research sessions |
-| **Step-locked navigation** | Each step unlocks only after the previous one completes |
-| **2 – 4 camera support** | Set camera count once; applies automatically to every step |
-| **RTMLib & OpenPose** | Switch pose estimators from the setup screen |
-| **Background execution** | Pipeline runs in QThread — UI stays responsive |
-| **Live console output** | Color-coded log with INFO / WARNING / ERROR / SUCCESS levels |
-| **Project save / load** | State persisted as `markerless_config.json` |
-
----
-
-## 📋 Pipeline Steps
+You record a person with 2-4 cameras, then this app walks you through every processing step:
 
 ```
-Setup → Calibration → 2D Pose → Synchronization → Triangulation → Filtering → Visualization
+Setup  ->  Calibration  ->  2D Pose  ->  Synchronization  ->  Triangulation  ->  Filtering  ->  Visualization
 ```
 
-| Step | What it does |
+| Step | What happens |
 |---|---|
-| **Setup** | Create/open project, choose camera count & pose estimator |
-| **Calibration** | Intrinsic (checkerboard / charuco) + Extrinsic (scene / board) |
-| **2D Pose Estimation** | Detect body keypoints in each camera view |
-| **Synchronization** | Align camera timelines via keypoint motion signals |
-| **Triangulation** | Reconstruct 3D positions with DLT from multi-view 2D detections |
-| **Filtering** | Smooth trajectories (Butterworth / Kalman / Gaussian / LOESS / Median) |
-| **Visualization** | Render 3D skeleton, export `.c3d` / `.trc` for OpenSim / Mokka |
+| **Setup** | Create or open a project folder, set camera count |
+| **Calibration** | Compute camera lens parameters (intrinsic) and camera positions (extrinsic) |
+| **2D Pose Estimation** | Detect body keypoints in each camera's video |
+| **Synchronization** | Align the timelines across cameras |
+| **Triangulation** | Combine 2D detections from all cameras into 3D coordinates |
+| **Filtering** | Smooth the 3D trajectories |
+| **Visualization** | View the 3D skeleton, export `.trc` / `.c3d` for biomechanics software |
+
+The final output is a `.trc` file you can open in [OpenSim](https://opensim.stanford.edu/) or [Mokka](https://biomechanical-toolkit.github.io/mokka/).
 
 ---
 
-## ⚡ Installation
+## Prerequisites
 
-### 1. Clone the repository
+Before you start, make sure these are installed on your computer:
+
+### 1. Install Anaconda (or Miniconda)
+
+Anaconda is a tool that manages Python and its packages so they don't conflict with other software on your computer.
+
+- **Download**: https://www.anaconda.com/download
+- Run the installer. Accept all default options.
+- When it finishes, you should be able to open a program called **"Terminal"** (macOS/Linux) or **"Anaconda Prompt"** (Windows).
+
+> **How to check if Anaconda is already installed:**
+> Open Terminal (or Anaconda Prompt) and type:
+> ```
+> conda --version
+> ```
+> If it prints something like `conda 24.x.x`, you're good. If it says "command not found", install Anaconda first.
+
+### 2. Install Git
+
+Git is a tool for downloading and updating code.
+
+- **macOS**: Open Terminal and type `git --version`. If prompted, click "Install" to get the Xcode command line tools.
+- **Windows**: Download from https://git-scm.com/download/win. Use all default options.
+- **Linux**: `sudo apt install git` (Ubuntu/Debian) or `sudo dnf install git` (Fedora)
+
+> **How to check if Git is already installed:**
+> ```
+> git --version
+> ```
+> If it prints something like `git version 2.x.x`, you're good.
+
+---
+
+## Installation (Step by Step)
+
+Open **Terminal** (macOS/Linux) or **Anaconda Prompt** (Windows). Then copy-paste each command below, pressing Enter after each one.
+
+### Step 1: Download the code
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/markerless.git
-cd markerless
+git clone https://github.com/Juno31/pose2sim-gui.git
 ```
 
-### 2. Create the conda environment
+This creates a folder called `pose2sim-gui` on your computer.
 
-Open **Anaconda Prompt** (Windows) or a terminal (macOS/Linux):
+### Step 2: Go into the folder
 
 ```bash
-conda env create -f environment.yml
+cd pose2sim-gui
+```
+
+### Step 3: Create the Python environment
+
+This installs Python and all required packages into an isolated environment called `markerless`:
+
+```bash
+conda create -n markerless python=3.10 -y
+```
+
+Wait until it finishes (about 1 minute).
+
+### Step 4: Activate the environment
+
+```bash
 conda activate markerless
 ```
 
-> First-time setup takes a few minutes while conda and pip download packages.
+Your terminal prompt should now show `(markerless)` at the beginning of the line.
 
-### 3. Run
+> **Important**: You must run `conda activate markerless` every time you open a new terminal window before running the app.
+
+### Step 5: Install the required packages
 
 ```bash
-python main.py
+pip install pose2sim pywebview rtmlib onnxruntime opencv-contrib-python toml
 ```
+
+Wait until it finishes (may take 3-5 minutes depending on your internet speed).
+
+### Step 6: Verify the installation
+
+```bash
+python -c "import Pose2Sim; import webview; print('OK')"
+```
+
+If it prints `OK`, the installation is complete.
 
 ---
 
-## 🎮 GPU Setup (NVIDIA only)
+## Running the App
 
-CPU-only works out of the box. For significantly faster pose estimation, follow these steps.
+Every time you want to use the app:
 
-### Step 1 — Check your CUDA version
+### 1. Open Terminal (or Anaconda Prompt)
+
+### 2. Activate the environment
+
+```bash
+conda activate markerless
+```
+
+### 3. Go to the project folder
+
+```bash
+cd pose2sim-gui
+```
+
+> **Tip**: If you don't remember where you downloaded it, you can find it by typing:
+> - macOS/Linux: `find ~ -name "pose2sim-gui" -type d 2>/dev/null`
+> - Windows: `dir /s /b "%USERPROFILE%\pose2sim-gui"`
+
+### 4. Start the app
+
+```bash
+python main_web.py
+```
+
+A window will open with the GUI. If nothing happens for a few seconds, wait — the first launch may take a moment to load.
+
+To stop the app, close the window or press `Ctrl+C` in the terminal.
+
+---
+
+## GPU Acceleration (Optional — NVIDIA Only)
+
+By default, pose estimation runs on CPU. If you have an NVIDIA GPU, you can make it 5-10x faster.
+
+> **Skip this section** if you don't have an NVIDIA GPU, or if you're on a Mac (Macs use a different GPU system).
+
+### Check if you have an NVIDIA GPU
 
 ```bash
 nvidia-smi
 ```
 
-Look for `CUDA Version: XX.X` in the top-right corner of the output.
-You need **CUDA 12.x** for the commands below.
+If this prints a table with your GPU info and `CUDA Version: 12.x`, continue below. If it says "command not found", you either don't have an NVIDIA GPU or the drivers aren't installed.
 
-### Step 2 — Install PyTorch with CUDA
+### Install GPU support
 
 ```bash
 conda activate markerless
-
+pip uninstall onnxruntime -y
+pip install onnxruntime-gpu
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
-> If your `nvidia-smi` shows a different CUDA version, find the right command at
-> https://pytorch.org/get-started/locally
-
-### Step 3 — Switch to onnxruntime-gpu
+### Verify GPU is working
 
 ```bash
-pip uninstall onnxruntime -y
-pip install onnxruntime-gpu
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 ```
 
-### Step 4 — Verify the GPU environment
-
-Run each check in order:
-
-**4a. Driver and CUDA**
-```bash
-nvidia-smi
-# Top-right corner must show CUDA 12.x
-```
-
-**4b. cuDNN (via PyTorch)**
-```bash
-python -c "import torch; print('cuDNN version :', torch.backends.cudnn.version()); print('cuDNN available:', torch.backends.cudnn.is_available())"
-# Expected: cuDNN available: True
-```
-
-**4c. ONNX Runtime providers**
-```bash
-python -c "import onnxruntime as ort; print('ORT version:', ort.__version__); print('Providers:', ort.get_available_providers())"
-# Expected: [..., 'CUDAExecutionProvider', 'CPUExecutionProvider']
-```
-
-**4d. Full end-to-end GPU test**
-```bash
-python -c "
-import onnxruntime as ort, onnx, numpy as np, tempfile, os
-from onnx import helper, TensorProto
-
-node  = helper.make_node('Identity', ['x'], ['y'])
-graph = helper.make_graph([node], 'test',
-    [helper.make_tensor_value_info('x', TensorProto.FLOAT, [1])],
-    [helper.make_tensor_value_info('y', TensorProto.FLOAT, [1])])
-model = helper.make_model(graph)
-tmp = tempfile.mktemp(suffix='.onnx')
-onnx.save(model, tmp)
-
-sess = ort.InferenceSession(tmp, providers=['CUDAExecutionProvider'])
-print('Active provider:', sess.get_providers()[0])
-os.remove(tmp)
-"
-# Expected: Active provider: CUDAExecutionProvider
-```
-
-If the last check prints `CUDAExecutionProvider` — GPU is fully working. ✓
+If the output includes `CUDAExecutionProvider`, GPU acceleration is active.
 
 ---
 
-## 🔄 Updating
+## Preparing Your Video Data
+
+See [DATA_ACQUISITION_GUIDE.md](DATA_ACQUISITION_GUIDE.md) for detailed recording instructions.
+
+Each project needs this folder structure:
+
+```
+my_project/
+├── calibration/
+│   ├── intrinsics/
+│   │   ├── int_cam01_img/
+│   │   │   └── (checkerboard video from camera 1)
+│   │   ├── int_cam02_img/
+│   │   │   └── (checkerboard video from camera 2)
+│   │   └── ...
+│   └── extrinsics/
+│       ├── ext_cam01_img/
+│       │   └── (scene video from camera 1)
+│       ├── ext_cam02_img/
+│       │   └── (scene video from camera 2)
+│       └── ...
+└── videos/
+    ├── cam01.mp4          (trial video from camera 1)
+    ├── cam02.mp4          (trial video from camera 2)
+    └── ...
+```
+
+**Quick checklist:**
+- All cameras must use the **same frame rate** (30 fps recommended)
+- All cameras must use the **same resolution**
+- Videos must be in **landscape orientation** (not portrait)
+- File format: `.mp4` (H.264 or H.265)
+
+---
+
+## Using the App
+
+### Page 0: Setup
+
+1. Click **"New Project"** to create a new project, or **"Open Project"** to load an existing one.
+2. For a new project: enter a name, choose a folder, select camera count (2-4), and pick pose estimator.
+3. The app creates the required folder structure for you.
+
+### Page 1: Calibration
+
+**Intrinsic calibration** (camera lens parameters):
+1. Place a checkerboard pattern in front of each camera and record a short video (15-30 seconds).
+2. Put each video in the corresponding `int_camXX_img/` folder.
+3. Set the checkerboard size (columns, rows, square size in mm).
+4. Click **"Run Intrinsics Only"** and wait for it to finish.
+
+**Extrinsic calibration** (camera positions):
+1. Place reference markers at known 3D positions in your scene.
+2. Record a short video from each camera showing the markers.
+3. Put each video in the corresponding `ext_camXX_img/` folder.
+4. Click **"Click Extrinsic Points"** — you'll see each camera's view.
+5. Click on each reference point in order (zoom with scroll, pan with Alt+drag).
+6. After all cameras, click **"Compute Calibration"**.
+7. Check the reprojection error — below 2 px is good.
+
+### Page 2: Processing
+
+Each sub-step has its own **Save** and **Run** buttons:
+
+1. **2D Pose Estimation**: Detects body keypoints in each video. A live preview shows the skeleton overlay. Takes 1-10 minutes depending on video length and GPU.
+2. **Synchronization**: Aligns camera timelines. Usually takes a few seconds.
+3. **Triangulation**: Combines 2D poses into 3D. Check that reprojection errors are reasonable.
+4. **Filtering**: Smooths the trajectories. Default Butterworth filter works well for most cases.
+
+### Page 3: Visualization
+
+- Select a `.trc` file to view the 3D skeleton animation.
+- Use the playback controls to scrub through frames.
+- Orbit, zoom, and pan the 3D view with your mouse.
+
+---
+
+## Troubleshooting
+
+### "No module named 'Pose2Sim'"
+You forgot to activate the environment. Run `conda activate markerless` first.
+
+### "No persons have been triangulated"
+- Make sure you completed **both** intrinsic and extrinsic calibration.
+- Check that the person is visible in at least 2 cameras throughout the recording.
+- Try increasing `reproj_error_threshold_triangulation` (e.g., from 15 to 30).
+
+### "Not a homogeneous array" during calibration
+Your `Config.toml` has mixed integer/float types. Make sure all numbers in coordinate arrays are floats (use `0.0` instead of `0`).
+
+### The app window doesn't open
+- Make sure you're running `python main_web.py` (not `main.py`).
+- Try: `pip install pywebview[qt]` if the default backend doesn't work.
+
+### Pose estimation is very slow
+- Check GPU setup (see GPU section above).
+- Reduce video resolution to 1080p.
+- Increase `det_frequency` (e.g., from 1 to 4) to run detection less often.
+
+### Videos are rotated sideways
+Phone videos recorded in portrait mode need to be re-encoded:
+```bash
+ffmpeg -i input.mp4 -c:v libx264 -crf 18 -c:a copy output.mp4
+```
+
+---
+
+## Updating the App
 
 ```bash
-cd markerless
+cd pose2sim-gui
 git pull
-conda env update -f environment.yml --prune
+pip install --upgrade pose2sim pywebview rtmlib
 ```
 
 ---
 
-## 🗑️ Removing the environment
+## Removing Everything
 
 ```bash
 conda deactivate
 conda env remove -n markerless
 ```
 
+Then delete the `pose2sim-gui` folder.
+
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
-markerless/
-│
-├── main.py                        # Entry point
-├── environment.yml                # Conda environment definition
-├── requirements.txt               # pip dependencies (reference)
-├── .gitignore
-├── README.md
-│
+pose2sim-gui/
+├── main_web.py              # Entry point — run this to start the app
 ├── app/
-│   ├── project.py                 # ProjectConfig dataclass + ProjectManager
-│   ├── runner.py                  # QThread workers for background execution
-│   └── pose2sim_api.py            # Lazy pose2sim import with clear error messages
-│
-├── ui/
-│   ├── main_window.py             # Main window + sidebar navigation
-│   ├── assets/
-│   │   └── style.qss              # Global dark theme stylesheet
-│   ├── components/
-│   │   └── widgets.py             # PathPicker, LogWidget, StepRunWidget
-│   └── tabs/
-│       ├── tab_setup.py           # Project creation & loading
-│       ├── tab_calibration.py     # Camera calibration
-│       ├── tab_pose2d.py          # 2D pose estimation
-│       ├── tab_sync.py            # Synchronization
-│       ├── tab_triangulation.py   # 3D triangulation
-│       ├── tab_filtering.py       # Trajectory filtering
-│       └── tab_visualization.py   # 3D marker visualization
-│
-└── docs/
-    └── GITHUB_UPLOAD.md           # Step-by-step GitHub upload guide
+│   ├── api.py               # Backend API (Python ↔ GUI communication)
+│   ├── project.py           # Project configuration and state management
+│   └── toml_bridge.py       # Config.toml read/write helpers
+├── web/
+│   ├── index.html           # GUI layout
+│   ├── style.css            # Visual styling
+│   └── app.js               # GUI logic (navigation, forms, 3D viewer)
+├── environment.yml          # Conda environment definition
+├── requirements.txt         # pip dependencies
+├── DATA_ACQUISITION_GUIDE.md  # Recording instructions for the data team
+└── README.md                # This file
 ```
 
 ---
 
-## 🔧 Requirements
+## Credits
 
-| Requirement | Version |
-|---|---|
-| Python | 3.12 |
-| PyQt5 | ≥ 5.15 |
-| pose2sim | latest |
-| CUDA *(optional)* | 12.x |
-| cuDNN *(optional)* | 9.x |
+- [Pose2Sim](https://github.com/perfanalytics/pose2sim) by David Pagnon — the core markerless pipeline
+- [RTMLib](https://github.com/Tau-J/rtmlib) — real-time pose estimation models
+- [Three.js](https://threejs.org/) — 3D visualization in the browser
+- [PyWebView](https://pywebview.flowrl.com/) — native desktop window for web UIs
 
-Tested on **Windows 10/11**, **Ubuntu 22.04**, **macOS 13+**.
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Config.toml auto-generation from GUI settings
-- [ ] Camera video preview panel (OpenCV)
-- [ ] "Run All" sequential pipeline mode
-- [ ] Output file browser panel
-- [ ] Multi-language support (EN / KO / FR)
-
----
-
-## 🤝 Contributing
-
-Pull requests are welcome!
-
-1. Fork the repo
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit your changes: `git commit -m 'Add my feature'`
-4. Push: `git push origin feature/my-feature`
-5. Open a Pull Request
-
----
-
-## 📄 License
+## License
 
 MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Credits
-
-- [Pose2Sim](https://github.com/perfanalytics/pose2sim) by **David Pagnon** — the underlying pipeline this GUI wraps
-- [RTMLib](https://github.com/Tau-J/rtmlib) — fast real-time pose estimation
-- [OpenPose](https://github.com/CMU-Perceptual-Computing-Lab/openpose) — Carnegie Mellon University
