@@ -63,6 +63,8 @@ const App = {
     if (btn) btn.classList.add('active');
     // Resize 3D viewer when switching to visualization
     if (idx === 3 && Viewer3D._renderer) Viewer3D.resize();
+    // Re-measure reference image height when switching to calibration
+    if (idx === 1) requestAnimationFrame(() => Calib._matchReferenceHeight());
   },
 
   async updateStepStatuses() {
@@ -1468,7 +1470,13 @@ const Calib = {
     const left = document.querySelector('.calib-grid-left');
     const right = document.getElementById('calib-reference-card');
     if (!left || !right || right.style.display === 'none') return;
-    right.style.maxHeight = left.offsetHeight + 'px';
+    const h = left.offsetHeight;
+    // Skip if tab is hidden (offsetHeight = 0)
+    if (h > 0) {
+      right.style.maxHeight = h + 'px';
+    } else {
+      right.style.maxHeight = '';
+    }
   },
 };
 
