@@ -561,8 +561,8 @@ input[type="radio"] { display: none; }
   gap: 8px;
 }
 .calib-grid-right {
-  align-self: stretch;
-  min-height: 0;
+  align-self: start;
+  overflow: hidden;
 }
 .calib-reference-section {
   height: 100%;

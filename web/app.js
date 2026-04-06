@@ -1451,6 +1451,9 @@ const Calib = {
         img.src = 'data:image/png;base64,' + res.image;
         card.style.display = '';
         if (grid) grid.classList.remove('calib-grid-single');
+        // Match right column height to left column after image loads
+        img.onload = () => this._matchReferenceHeight();
+        requestAnimationFrame(() => this._matchReferenceHeight());
       } else {
         card.style.display = 'none';
         if (grid) grid.classList.add('calib-grid-single');
@@ -1460,10 +1463,20 @@ const Calib = {
       if (grid) grid.classList.add('calib-grid-single');
     }
   },
+
+  _matchReferenceHeight() {
+    const left = document.querySelector('.calib-grid-left');
+    const right = document.getElementById('calib-reference-card');
+    if (!left || !right || right.style.display === 'none') return;
+    right.style.maxHeight = left.offsetHeight + 'px';
+  },
 };
 
 
 // ─── Boot ─────────────────────────────────────────────────────
 window.addEventListener('pywebviewready', () => App.init());
 if (window.pywebview?.api) App.init();
-window.addEventListener('resize', () => { if (Viewer3D._renderer) Viewer3D.resize(); });
+window.addEventListener('resize', () => {
+  if (Viewer3D._renderer) Viewer3D.resize();
+  Calib._matchReferenceHeight();
+});
