@@ -561,21 +561,29 @@ input[type="radio"] { display: none; }
   gap: 8px;
 }
 .calib-grid-right {
-  position: sticky;
-  top: 32px;
+  align-self: stretch;
+  min-height: 0;
 }
 .calib-reference-section {
   height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 .calib-reference-wrap {
+  flex: 1;
+  min-height: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--border);
   background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .calib-reference-img {
   display: block;
   width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 /* Single column when no reference image */
