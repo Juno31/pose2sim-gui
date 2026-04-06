@@ -783,9 +783,10 @@ input[type="radio"] { display: none; }
   gap: 8px;
 }
 
-/* Log cell must not grow taller than the two content rows */
+/* Log cell height constraints */
 .proc-log {
-  max-height: calc(100vh - 140px);  /* viewport minus header/padding */
+  min-height: 300px;
+  max-height: calc(100vh - 140px);
   overflow: hidden;
 }
 
@@ -817,7 +818,8 @@ input[type="radio"] { display: none; }
 }
 .proc-log-inner .console {
   flex: 1;
-  min-height: 0;  /* allow flex child to shrink below content size */
+  min-height: 200px;
+  max-height: calc(100vh - 240px);
   overflow-y: auto;
 }
 .proc-log-title {
