@@ -62,65 +62,72 @@
     <section class="tab" id="tab-1">
       <header class="tab-header"><h1>Calibration</h1></header>
 
-      <div class="section">
-        <h2>Intrinsic</h2>
-        <div class="grid-2">
-          <div class="field"><label>Columns</label><input type="number" id="cal-int-cols" value="6" min="3" max="20"></div>
-          <div class="field"><label>Rows</label><input type="number" id="cal-int-rows" value="9" min="3" max="20"></div>
-          <div class="field"><label>Square size (mm)</label><input type="number" id="cal-int-square" value="40.0" step="0.1"></div>
-          <div class="field"><label>Extract every (s)</label><input type="number" id="cal-int-extract" value="1.0" step="0.1"></div>
-          <div class="field"><label>Extension</label><select id="cal-int-ext"><option>jpg</option><option>png</option><option>mp4</option><option>avi</option><option>mov</option></select></div>
-          <div class="field"><label>Overwrite</label><input type="checkbox" id="cal-int-overwrite"></div>
-          <div class="field"><label>Show detection</label><input type="checkbox" id="cal-int-show" checked></div>
-        </div>
-        <div class="step-actions">
-          <button class="btn-subtle" onclick="App.saveCalibrationConfig()">Save</button>
-          <button class="btn" onclick="App.runStep('calibration')">Run Intrinsics Only</button>
-        </div>
-      </div>
-
-      <!-- Reference image for extrinsic point clicking -->
-      <div class="section" id="calib-reference-card" style="display:none;">
-        <h2>Reference</h2>
-        <div class="calib-reference-wrap">
-          <img id="calib-reference-img" class="calib-reference-img" alt="Reference image">
-        </div>
-      </div>
-
-      <div class="section">
-        <h2>Extrinsic — Scene Calibration</h2>
-        <div class="grid-2">
-          <div class="field"><label>Method</label><select id="cal-ext-method"><option>scene</option><option>board</option></select></div>
-          <div class="field"><label>Extension</label><select id="cal-ext-ext"><option>png</option><option>jpg</option><option selected>mp4</option><option>avi</option><option>mov</option></select></div>
-          <div class="field"><label>Show reproj. error</label><input type="checkbox" id="cal-ext-reproj" checked></div>
-          <div class="field"><label>Save debug images</label><input type="checkbox" id="cal-debug-images" checked></div>
-        </div>
-
-        <!-- In-window extrinsic calibration -->
-        <div id="calib-clicker" class="calib-clicker" style="display:none;">
-          <div class="calib-toolbar">
-            <span class="calib-cam-label" id="calib-cam-label">Camera 1 / 4</span>
-            <span class="calib-point-count" id="calib-point-count">0 / 10 points</span>
-            <button class="btn-ghost" onclick="Calib.undoPoint()">Undo</button>
-            <button class="btn-ghost" onclick="Calib.skipCamera()">Skip</button>
-            <button class="btn" onclick="Calib.confirmCamera()" id="calib-confirm-btn" disabled>Confirm</button>
-          </div>
-          <div class="calib-layout">
-            <div class="calib-canvas-wrap">
-              <canvas id="calib-canvas"></canvas>
-              <div class="calib-hint" id="calib-hint">Click the 3D reference points in order. Left-click to place, right-click to undo.</div>
+      <div class="calib-grid">
+        <!-- Left column: Intrinsic + Extrinsic -->
+        <div class="calib-grid-left">
+          <div class="section">
+            <h2>Intrinsic</h2>
+            <div class="grid-2">
+              <div class="field"><label>Columns</label><input type="number" id="cal-int-cols" value="6" min="3" max="20"></div>
+              <div class="field"><label>Rows</label><input type="number" id="cal-int-rows" value="9" min="3" max="20"></div>
+              <div class="field"><label>Square size (mm)</label><input type="number" id="cal-int-square" value="40.0" step="0.1"></div>
+              <div class="field"><label>Extract every (s)</label><input type="number" id="cal-int-extract" value="1.0" step="0.1"></div>
+              <div class="field"><label>Extension</label><select id="cal-int-ext"><option>jpg</option><option>png</option><option>mp4</option><option>avi</option><option>mov</option></select></div>
+              <div class="field"><label>Overwrite</label><input type="checkbox" id="cal-int-overwrite"></div>
+              <div class="field"><label>Show detection</label><input type="checkbox" id="cal-int-show" checked></div>
             </div>
-            <div class="calib-objpts" id="calib-objpts">
-              <div class="calib-objpts-title">3D Reference Points</div>
-              <div id="calib-objpts-list"></div>
+            <div class="step-actions">
+              <button class="btn-subtle" onclick="App.saveCalibrationConfig()">Save</button>
+              <button class="btn" onclick="App.runStep('calibration')">Run Intrinsics Only</button>
             </div>
           </div>
+
+          <div class="section">
+            <h2>Extrinsic — Scene Calibration</h2>
+            <div class="grid-2">
+              <div class="field"><label>Method</label><select id="cal-ext-method"><option>scene</option><option>board</option></select></div>
+              <div class="field"><label>Extension</label><select id="cal-ext-ext"><option>png</option><option>jpg</option><option selected>mp4</option><option>avi</option><option>mov</option></select></div>
+              <div class="field"><label>Show reproj. error</label><input type="checkbox" id="cal-ext-reproj" checked></div>
+              <div class="field"><label>Save debug images</label><input type="checkbox" id="cal-debug-images" checked></div>
+            </div>
+
+            <!-- In-window extrinsic calibration -->
+            <div id="calib-clicker" class="calib-clicker" style="display:none;">
+              <div class="calib-toolbar">
+                <span class="calib-cam-label" id="calib-cam-label">Camera 1 / 4</span>
+                <span class="calib-point-count" id="calib-point-count">0 / 10 points</span>
+                <button class="btn-ghost" onclick="Calib.undoPoint()">Undo</button>
+                <button class="btn-ghost" onclick="Calib.skipCamera()">Skip</button>
+                <button class="btn" onclick="Calib.confirmCamera()" id="calib-confirm-btn" disabled>Confirm</button>
+              </div>
+              <div class="calib-layout">
+                <div class="calib-canvas-wrap">
+                  <canvas id="calib-canvas"></canvas>
+                  <div class="calib-hint" id="calib-hint">Click the 3D reference points in order. Left-click to place, right-click to undo.</div>
+                </div>
+                <div class="calib-objpts" id="calib-objpts">
+                  <div class="calib-objpts-title">3D Reference Points</div>
+                  <div id="calib-objpts-list"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="step-actions">
+              <button class="btn-subtle" onclick="App.saveCalibrationConfig()">Save</button>
+              <button class="btn" onclick="Calib.startExtrinsic()" id="btn-start-extrinsic">Click Extrinsic Points</button>
+              <button class="btn" onclick="Calib.finishCalibration()" id="btn-finish-calib" style="display:none">Compute Calibration</button>
+            </div>
+          </div>
         </div>
 
-        <div class="step-actions">
-          <button class="btn-subtle" onclick="App.saveCalibrationConfig()">Save</button>
-          <button class="btn" onclick="Calib.startExtrinsic()" id="btn-start-extrinsic">Click Extrinsic Points</button>
-          <button class="btn" onclick="Calib.finishCalibration()" id="btn-finish-calib" style="display:none">Compute Calibration</button>
+        <!-- Right column: Reference image -->
+        <div class="calib-grid-right" id="calib-reference-card" style="display:none;">
+          <div class="section calib-reference-section">
+            <h2>Reference</h2>
+            <div class="calib-reference-wrap">
+              <img id="calib-reference-img" class="calib-reference-img" alt="Reference image">
+            </div>
+          </div>
         </div>
       </div>
 

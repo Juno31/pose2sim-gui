@@ -112,7 +112,7 @@ body { display: flex; overflow: hidden; }
 /* ─── Tabs ─── */
 .tab { display: none; max-width: 680px; }
 .tab.active { display: block; }
-#tab-2 { max-width: none; }
+#tab-1, #tab-2 { max-width: none; }
 
 .tab-header { margin-bottom: 28px; }
 .tab-header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; color: var(--text); }
@@ -548,7 +548,25 @@ input[type="radio"] { display: none; }
 }
 
 /* ─── Calibration Clicker ─── */
-/* ─── Reference Image ─── */
+/* ─── Calibration Grid ─── */
+.calib-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+}
+.calib-grid-left {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.calib-grid-right {
+  position: sticky;
+  top: 32px;
+}
+.calib-reference-section {
+  height: 100%;
+}
 .calib-reference-wrap {
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -558,8 +576,17 @@ input[type="radio"] { display: none; }
 .calib-reference-img {
   display: block;
   width: 100%;
-  max-height: 500px;
   object-fit: contain;
+}
+/* Single column when no reference image */
+.calib-grid.calib-grid-single {
+  grid-template-columns: 1fr;
+  max-width: 680px;
+}
+@media (max-width: 900px) {
+  .calib-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .calib-clicker {

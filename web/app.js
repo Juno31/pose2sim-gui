@@ -81,7 +81,9 @@ const App = {
     this._setSubBadge('sub-status-triang', s[4]);
     this._setSubBadge('sub-status-filt', s[5]);
     this._setBadge('status-3', s[6], icons);
-    this._setNavEnabled(3, s[6] !== 0);
+    // Enable Visualization tab when triangulation (s[4]) or filtering (s[5]) is done,
+    // or markerAugmentation (s[6]) is unlocked — i.e. TRC files may exist
+    this._setNavEnabled(3, s[4] === 3 || s[5] === 3 || s[6] !== 0);
   },
 
   _aggregateStatus(statuses) {
@@ -1441,17 +1443,21 @@ const Calib = {
   async loadReferenceImage() {
     const card = document.getElementById('calib-reference-card');
     const img = document.getElementById('calib-reference-img');
+    const grid = document.querySelector('.calib-grid');
     if (!card || !img) return;
     try {
       const res = await pywebview.api.get_reference_image();
       if (res.success && res.image) {
         img.src = 'data:image/png;base64,' + res.image;
         card.style.display = '';
+        if (grid) grid.classList.remove('calib-grid-single');
       } else {
         card.style.display = 'none';
+        if (grid) grid.classList.add('calib-grid-single');
       }
     } catch (e) {
       card.style.display = 'none';
+      if (grid) grid.classList.add('calib-grid-single');
     }
   },
 };
