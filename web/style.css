@@ -744,7 +744,14 @@ input[type="radio"] { display: none; }
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   grid-template-rows: auto auto;
+  grid-auto-rows: auto;
   gap: 8px;
+}
+
+/* Log cell must not grow taller than the two content rows */
+.proc-log {
+  max-height: calc(100vh - 140px);  /* viewport minus header/padding */
+  overflow: hidden;
 }
 
 /* Log spans 2 rows on right column */
@@ -771,11 +778,12 @@ input[type="radio"] { display: none; }
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
   padding: 14px 16px !important;
+  overflow: hidden;
 }
 .proc-log-inner .console {
   flex: 1;
-  max-height: none;
-  min-height: 200px;
+  min-height: 0;  /* allow flex child to shrink below content size */
+  overflow-y: auto;
 }
 .proc-log-title {
   font-size: 14px;
