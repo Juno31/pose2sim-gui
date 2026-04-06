@@ -21,6 +21,8 @@ from app.toml_bridge import load_toml, save_toml_values
 
 
 class Api:
+    _SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.app_settings.json')
+
     def __init__(self):
         self.pm = ProjectManager()
         self._window = None  # Set by main_web.py after window creation
@@ -29,6 +31,32 @@ class Api:
         self._log_buffer = []
         self._log_lock = threading.Lock()
         self._running = False
+
+    def _save_last_project(self, project_dir):
+        """Remember the last opened project path."""
+        try:
+            settings = {}
+            if os.path.exists(self._SETTINGS_FILE):
+                with open(self._SETTINGS_FILE, 'r') as f:
+                    settings = json.load(f)
+            settings['last_project_dir'] = project_dir
+            with open(self._SETTINGS_FILE, 'w') as f:
+                json.dump(settings, f, indent=2)
+        except Exception:
+            pass
+
+    def get_last_project(self):
+        """Return the last opened project directory, or None."""
+        try:
+            if os.path.exists(self._SETTINGS_FILE):
+                with open(self._SETTINGS_FILE, 'r') as f:
+                    settings = json.load(f)
+                path = settings.get('last_project_dir')
+                if path and os.path.isdir(path):
+                    return {"success": True, "project_dir": path}
+            return {"success": False}
+        except Exception:
+            return {"success": False}
 
     # ─── Project Management ───────────────────────────────────────
 
@@ -59,6 +87,7 @@ class Api:
             self.pm.new_project(project_path, project_name, camera_count, pose_estimator)
             self.pm.set_step_status(0, StepStatus.DONE)
             self.pm.save_project()
+            self._save_last_project(project_path)
             return {"success": True, "project_dir": project_path}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -77,6 +106,7 @@ class Api:
                 self.pm.new_project(project_dir, name, cam_count, "RTMLib")
                 self.pm.set_step_status(0, StepStatus.DONE)
                 self.pm.save_project()
+            self._save_last_project(project_dir)
             return {"success": True, "config": self.pm.config.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -665,6 +695,21 @@ class Api:
 
     # ─── In-Window Calibration ────────────────────────────────────
 
+    def get_reference_image(self):
+        """Load reference.png from the project calibration folder as base64."""
+        try:
+            proj = self.pm.config.project_dir
+            if not proj:
+                return {"success": False}
+            ref_path = os.path.join(proj, "calibration", "reference.png")
+            if not os.path.exists(ref_path):
+                return {"success": False}
+            with open(ref_path, 'rb') as f:
+                data = base64.b64encode(f.read()).decode('ascii')
+            return {"success": True, "image": data}
+        except Exception:
+            return {"success": False}
+
     def get_extrinsic_frame(self, cam_index):
         """
         Extract first frame from extrinsic calibration video/image for a camera.
@@ -734,11 +779,38 @@ class Api:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def load_image_points(self):
+        """
+        Load previously clicked 2D points from Image_points.json.
+        Returns a dict mapping cam_name → [[x,y], ...] for each camera.
+        """
+        try:
+            proj = self.pm.config.project_dir
+            if not proj:
+                return {"success": False, "error": "No project loaded"}
+            img_pts_path = os.path.join(proj, "calibration", "Image_points.json")
+            if not os.path.exists(img_pts_path):
+                return {"success": True, "cameras": {}}
+            with open(img_pts_path, 'r') as f:
+                data = json.load(f)
+            cameras = {}
+            for entry in data.get("extrinsics", []):
+                cam_name = entry.get("cam_name", "")
+                flat_2d = entry.get("image_points_2d", [])
+                # Convert flat [x1,y1,x2,y2,...] → [[x1,y1],[x2,y2],...]
+                pts = [[flat_2d[i], flat_2d[i+1]] for i in range(0, len(flat_2d), 2)]
+                if cam_name and pts:
+                    cameras[cam_name] = pts
+            return {"success": True, "cameras": cameras}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def run_calibration_with_points(self, all_points_2d):
         """
         Run full calibration using manually clicked 2D points.
         all_points_2d: list of {cam_name, points: [[x,y], ...]} per camera.
         Performs intrinsic loading + extrinsic solvePnP + saves Calib_scene.toml.
+        Merges with existing Calib_scene.toml so cameras not in the payload keep their extrinsics.
         """
         try:
             proj = self.pm.config.project_dir
@@ -778,10 +850,17 @@ class Api:
             if len(cam_names) == 0:
                 return {"success": False, "error": "No camera data in intrinsics file"}
 
-            # Process each camera's clicked points
-            R_list = []
-            T_list = []
-            ret_list = []
+            # Load existing Calib_scene.toml to preserve extrinsics of cameras not being re-calibrated
+            existing_scene_path = os.path.join(calib_dir, "Calib_scene.toml")
+            existing_scene = {}
+            if os.path.exists(existing_scene_path):
+                try:
+                    existing_scene = toml.load(existing_scene_path)
+                except Exception:
+                    pass
+
+            # Process each camera's clicked points → per-camera R/T dict
+            solved = {}  # cam_name → {r, t, rms}
             results_per_cam = []
 
             for cam_data in all_points_2d:
@@ -816,9 +895,7 @@ class Api:
                 errors = np.sqrt(np.sum((proj_pts - pts_2d) ** 2, axis=1))
                 rms = np.sqrt(np.mean(errors ** 2))
 
-                R_list.append(r.tolist())
-                T_list.append(t.tolist())
-                ret_list.append(float(rms))
+                solved[cam_names[cam_idx]] = {"r": r.tolist(), "t": t.tolist(), "rms": float(rms)}
                 results_per_cam.append({
                     "cam": cam_names[cam_idx],
                     "rms_px": round(float(rms), 2),
@@ -826,7 +903,7 @@ class Api:
                     "t": t.tolist(),
                 })
 
-            # Save to Calib_scene.toml
+            # Save to Calib_scene.toml — merge new results with existing extrinsics
             output = {}
             for i, name in enumerate(cam_names):
                 entry = {
@@ -836,39 +913,51 @@ class Api:
                     "distortions": cam_D[i].tolist(),
                     "fisheye": False,
                 }
-                if i < len(R_list):
-                    entry["rotation"] = R_list[i]
-                    entry["translation"] = T_list[i]
+                if name in solved:
+                    # Use newly computed extrinsics
+                    entry["rotation"] = solved[name]["r"]
+                    entry["translation"] = solved[name]["t"]
+                elif name in existing_scene and "rotation" in existing_scene[name]:
+                    # Preserve existing extrinsics for cameras not re-calibrated
+                    entry["rotation"] = existing_scene[name]["rotation"]
+                    entry["translation"] = existing_scene[name]["translation"]
                 output[name] = entry
 
             out_path = os.path.join(calib_dir, "Calib_scene.toml")
             with open(out_path, 'w') as f:
                 toml.dump(output, f)
 
-            # Save Image_points.json for compatibility
-            img_pts_data = {"extrinsics": []}
+            # Save Image_points.json — merge per-camera (preserve points for cameras not re-clicked)
+            img_pts_path = os.path.join(calib_dir, "Image_points.json")
+            img_pts_data = {}
+            if os.path.exists(img_pts_path):
+                try:
+                    with open(img_pts_path, 'r') as f:
+                        img_pts_data = json.load(f)
+                except Exception:
+                    pass
+
+            # Build lookup of existing extrinsic entries by cam_name
+            existing_ext = {}
+            for entry in img_pts_data.get("extrinsics", []):
+                existing_ext[entry.get("cam_name", "")] = entry
+
+            # Update with newly clicked cameras
             for cam_data in all_points_2d:
+                cam_name = cam_data.get('cam_name', '')
                 flat_2d = []
                 for pt in cam_data['points']:
                     flat_2d.extend([float(pt[0]), float(pt[1])])
                 flat_3d = []
                 for pt in object_coords_3d[:len(cam_data['points'])]:
                     flat_3d.extend([float(pt[0]), float(pt[1]), float(pt[2])])
-                img_pts_data["extrinsics"].append({
-                    "cam_name": cam_data.get('cam_name', ''),
+                existing_ext[cam_name] = {
+                    "cam_name": cam_name,
                     "image_points_2d": flat_2d,
                     "object_points_3d": flat_3d,
-                })
-            img_pts_path = os.path.join(calib_dir, "Image_points.json")
-            # Merge with existing if present
-            if os.path.exists(img_pts_path):
-                try:
-                    with open(img_pts_path, 'r') as f:
-                        existing = json.load(f)
-                    existing["extrinsics"] = img_pts_data["extrinsics"]
-                    img_pts_data = existing
-                except Exception:
-                    pass
+                }
+
+            img_pts_data["extrinsics"] = list(existing_ext.values())
             with open(img_pts_path, 'w') as f:
                 json.dump(img_pts_data, f, indent=2)
 
@@ -882,9 +971,16 @@ class Api:
                         existing = json.load(f)
                 except Exception:
                     pass
+            # Merge per-camera extrinsic results (preserve cameras not re-calibrated)
+            prev_ext_cams = {}
+            if "extrinsics" in existing and "cameras" in existing["extrinsics"]:
+                for c in existing["extrinsics"]["cameras"]:
+                    prev_ext_cams[c.get("cam", "")] = c
+            for c in results_per_cam:
+                prev_ext_cams[c.get("cam", "")] = c
             existing["extrinsics"] = {
                 "timestamp": datetime.datetime.now().isoformat(),
-                "cameras": results_per_cam,
+                "cameras": list(prev_ext_cams.values()),
                 "output_path": out_path,
             }
             with open(results_path, 'w') as f:
@@ -900,12 +996,261 @@ class Api:
             traceback.print_exc()
             return {"success": False, "error": str(e)}
 
+    # ─── Synchronization & Video Trimming ──────────────────────────
+
+    def compute_sync_offsets(self):
+        """
+        Derive per-camera sync offsets by comparing frame numbering
+        in pose/ vs pose-sync/ directories.
+        Returns: {cameras: [{name, offset_frames, orig_frames, sync_first, sync_last}], ref_cam, fps}
+        """
+        try:
+            proj = self.pm.config.project_dir
+            if not proj:
+                return {"success": False, "error": "No project loaded"}
+            pose_dir = os.path.join(proj, "pose")
+            sync_dir = os.path.join(proj, "pose-sync")
+            if not os.path.isdir(sync_dir):
+                return {"success": False, "error": "No pose-sync directory. Run synchronization first."}
+
+            import re
+
+            # Get FPS from Config.toml or from video
+            cfg = load_toml(proj)
+            fps = cfg.get('project', {}).get('frame_rate', 'auto')
+            if fps == 'auto' or not isinstance(fps, (int, float)):
+                # Read FPS from first video
+                vid_dir = os.path.join(proj, "videos")
+                vid_files = sorted(glob.glob(os.path.join(vid_dir, "*.mp4")) +
+                                   glob.glob(os.path.join(vid_dir, "*.avi")) +
+                                   glob.glob(os.path.join(vid_dir, "*.mov")))
+                if vid_files:
+                    cap = cv2.VideoCapture(vid_files[0])
+                    fps = round(cap.get(cv2.CAP_PROP_FPS))
+                    cap.release()
+                else:
+                    fps = 30
+
+            # Get camera directories from pose-sync
+            sync_cam_dirs = sorted([d for d in os.listdir(sync_dir)
+                                    if os.path.isdir(os.path.join(sync_dir, d)) and d.endswith('_json')])
+            if not sync_cam_dirs:
+                return {"success": False, "error": "No synced pose data found in pose-sync/"}
+
+            cameras = []
+            for cam_dir_name in sync_cam_dirs:
+                # Extract camera name prefix (e.g. "cam1_mo_person1" from "cam1_mo_person1_json")
+                cam_prefix = cam_dir_name[:-5]  # remove "_json"
+
+                # Get synced frame numbers
+                sync_files = sorted(os.listdir(os.path.join(sync_dir, cam_dir_name)))
+                sync_files = [f for f in sync_files if f.endswith('.json')]
+                if not sync_files:
+                    continue
+
+                # Extract frame numbers from filenames
+                def extract_frame(fname):
+                    nums = re.findall(r'(\d+)', fname)
+                    return int(nums[-1]) if nums else 0
+
+                sync_frames = [extract_frame(f) for f in sync_files]
+                sync_first = min(sync_frames)
+                sync_last = max(sync_frames)
+
+                # Get original frame count
+                orig_dir = os.path.join(pose_dir, cam_dir_name)
+                orig_count = 0
+                if os.path.isdir(orig_dir):
+                    orig_count = len([f for f in os.listdir(orig_dir) if f.endswith('.json')])
+
+                cameras.append({
+                    "name": cam_prefix,
+                    "dir_name": cam_dir_name,
+                    "sync_first": sync_first,
+                    "sync_last": sync_last,
+                    "sync_count": len(sync_files),
+                    "orig_count": orig_count,
+                })
+
+            if not cameras:
+                return {"success": False, "error": "No camera data found"}
+
+            # Find common frame range (intersection of all cameras' synced ranges)
+            common_first = max(c["sync_first"] for c in cameras)
+            common_last = min(c["sync_last"] for c in cameras)
+
+            # Reference camera = the one with the fewest original frames
+            ref_idx = min(range(len(cameras)), key=lambda i: cameras[i]["orig_count"])
+
+            return {
+                "success": True,
+                "cameras": cameras,
+                "ref_cam": cameras[ref_idx]["name"],
+                "fps": fps,
+                "common_first": common_first,
+                "common_last": common_last,
+                "common_frames": max(0, common_last - common_first + 1),
+            }
+        except Exception as e:
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    def trim_synced_videos(self):
+        """
+        Trim original videos to the common synchronized frame range
+        and save to videos-sync/ directory.
+        Uses the sync offsets derived from pose-sync/ JSON numbering.
+        """
+        if self._running:
+            return {"success": False, "error": "A step is already running"}
+
+        proj = self.pm.config.project_dir
+        if not proj:
+            return {"success": False, "error": "No project loaded"}
+
+        # First compute offsets
+        offsets = self.compute_sync_offsets()
+        if not offsets.get("success"):
+            return offsets
+
+        cameras = offsets["cameras"]
+        fps = offsets["fps"]
+        common_first = offsets["common_first"]
+        common_last = offsets["common_last"]
+
+        if common_last <= common_first:
+            return {"success": False, "error": "No common frame range across cameras"}
+
+        self._running = True
+        with self._log_lock:
+            self._log_buffer = []
+
+        # Write a trimming script and run as subprocess
+        vid_dir = os.path.join(proj, "videos")
+        out_dir = os.path.join(proj, "videos-sync")
+        script_path = os.path.join(proj, "_run_trim.py")
+
+        # Map synced frame numbers back to original frame numbers:
+        # orig_frame = synced_frame - sync_first
+        cam_trim_info = []
+        for cam in cameras:
+            # Find the video file matching this camera
+            cam_short = cam["name"].split("_")[0]  # e.g. "cam1" from "cam1_mo_person1"
+            vid_files = sorted(glob.glob(os.path.join(vid_dir, f"{cam_short}*")))
+            vid_file = vid_files[0] if vid_files else None
+            if not vid_file:
+                # Try matching the full prefix
+                vid_files = sorted(glob.glob(os.path.join(vid_dir, f"{cam['name']}*")))
+                vid_file = vid_files[0] if vid_files else None
+
+            cam_trim_info.append({
+                "name": cam["name"],
+                "vid_file": vid_file,
+                "sync_first": cam["sync_first"],
+                "common_first": common_first,
+                "common_last": common_last,
+            })
+
+        # Write trim script — use triple-quoted template to avoid escaping issues
+        trim_script = f'''import os, sys, cv2, logging
+sys.stdout.reconfigure(encoding='utf-8')
+logging.basicConfig(level=logging.INFO, format='%(message)s', stream=sys.stdout)
+out_dir = {repr(out_dir)}
+os.makedirs(out_dir, exist_ok=True)
+cam_info = {repr(cam_trim_info)}
+fps = {fps}
+
+try:
+    for ci in cam_info:
+        vid_path = ci['vid_file']
+        if not vid_path or not os.path.exists(vid_path):
+            logging.warning(f"Video not found for {{ci['name']}}, skipping.")
+            continue
+        vid_name = os.path.basename(vid_path)
+        out_path = os.path.join(out_dir, vid_name)
+
+        # Map synced frame range back to original frames
+        orig_start = ci['common_first'] - ci['sync_first']
+        orig_end = ci['common_last'] - ci['sync_first']
+        orig_start = max(0, orig_start)
+
+        cap = cv2.VideoCapture(vid_path)
+        W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        vid_fps = round(cap.get(cv2.CAP_PROP_FPS))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        orig_end = min(orig_end, total - 1)
+        trim_frames = orig_end - orig_start + 1
+
+        logging.info(f"[INFO] {{vid_name}}: trimming frames {{orig_start}}-{{orig_end}} ({{trim_frames}} frames, {{trim_frames/vid_fps:.1f}}s)")
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(out_path, fourcc, vid_fps, (W, H))
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, orig_start)
+        for fi in range(trim_frames):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            writer.write(frame)
+            if fi % 100 == 0:
+                pct = round(100 * fi / max(trim_frames, 1))
+                print(f"  {{vid_name}}: {{fi}}/{{trim_frames}} ({{pct}}%)", flush=True)
+
+        cap.release()
+        writer.release()
+        logging.info(f"[SUCCESS] Saved: {{out_path}}")
+
+    logging.info(f"[SUCCESS] All trimmed videos saved to {{out_dir}}")
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+'''
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(trim_script)
+
+        def worker():
+            try:
+                cmd = [sys.executable, '-u', script_path]
+                self._worker_proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, cwd=proj,
+                )
+                for line in self._worker_proc.stdout:
+                    line = line.rstrip()
+                    if line:
+                        with self._log_lock:
+                            self._log_buffer.append(line)
+                self._worker_proc.wait()
+                rc = self._worker_proc.returncode
+                with self._log_lock:
+                    if rc == 0:
+                        self._log_buffer.append("[SUCCESS] Video trimming completed.")
+                    else:
+                        self._log_buffer.append(f"[ERROR] Trim process exited with code {rc}")
+            except Exception as e:
+                with self._log_lock:
+                    self._log_buffer.append(f"[ERROR] {str(e)}")
+            finally:
+                self._running = False
+                self._worker_proc = None
+                try:
+                    os.remove(script_path)
+                except Exception:
+                    pass
+
+        import threading
+        self._worker_thread = threading.Thread(target=worker, daemon=True)
+        self._worker_thread.start()
+        return {"success": True}
+
     def get_pose_preview(self):
         """Return the latest pose estimation preview frame as base64 JPEG."""
         try:
-            if not self.pm or not self.pm.project_dir:
+            if not self.pm or not self.pm.config.project_dir:
                 return {"success": False}
-            preview_path = os.path.join(self.pm.project_dir, '_pose_preview.jpg')
+            preview_path = os.path.join(self.pm.config.project_dir, '_pose_preview.jpg')
             if not os.path.exists(preview_path):
                 return {"success": False}
             # Check file age — skip if stale (> 10s old)
@@ -921,9 +1266,9 @@ class Api:
     def get_calibration_results(self):
         """Load saved calibration results (intrinsic + extrinsic reprojection errors) if available."""
         try:
-            if not self.pm or not self.pm.project_dir:
+            if not self.pm or not self.pm.config.project_dir:
                 return {"success": False, "error": "No project loaded"}
-            calib_dir = os.path.join(self.pm.project_dir, "calibration")
+            calib_dir = os.path.join(self.pm.config.project_dir, "calibration")
             results_path = os.path.join(calib_dir, "Calib_results.json")
             if not os.path.exists(results_path):
                 return {"success": False, "error": "No calibration results found"}

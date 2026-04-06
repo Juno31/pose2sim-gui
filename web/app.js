@@ -30,8 +30,19 @@ const App = {
     }
     this.bindSidebar();
     this.switchTab(0);
-    const cfg = await pywebview.api.get_project_config();
-    if (cfg.project_dir) this.onProjectLoaded(cfg);
+    let cfg = await pywebview.api.get_project_config();
+    if (cfg.project_dir) {
+      this.onProjectLoaded(cfg);
+    } else {
+      // Try to auto-open the last project
+      try {
+        const last = await pywebview.api.get_last_project();
+        if (last.success && last.project_dir) {
+          const result = await pywebview.api.open_project(last.project_dir);
+          if (result.success) this.onProjectLoaded(result.config);
+        }
+      } catch (e) { /* no last project */ }
+    }
   },
 
   // ─── Sidebar ────────────────────────────────────────────────
@@ -138,11 +149,14 @@ const App = {
   async onProjectLoaded(cfg) {
     document.getElementById('project-info').innerHTML =
       `<strong>${cfg.project_name}</strong><br>${cfg.camera_count} cameras &bull; ${cfg.pose_estimator}`;
+    if (cfg.project_dir) document.getElementById('open-project-dir').value = cfg.project_dir;
     document.getElementById('project-params-card').style.display = '';
     await this.loadAllConfigs();
     await this.updateStepStatuses();
     await this.loadCameraVideos();
     await Calib.loadResults();
+    await Calib.loadReferenceImage();
+    await this.loadSyncOffsets();
   },
 
   // ─── Load Config ────────────────────────────────────────────
@@ -383,15 +397,23 @@ const App = {
   },
 
   _startPosePreview() {
-    const wrap = document.getElementById('pose-preview-wrap');
-    if (wrap) wrap.style.display = '';
+    const placeholder = document.getElementById('pose-preview-placeholder');
+    if (placeholder) placeholder.style.display = 'none';
     if (this._posePreviewTimer) clearInterval(this._posePreviewTimer);
     this._posePreviewTimer = setInterval(async () => {
       try {
         const res = await pywebview.api.get_pose_preview();
         if (res.success && res.image) {
-          const img = document.getElementById('pose-preview-img');
-          if (img) img.src = 'data:image/jpeg;base64,' + res.image;
+          const canvas = document.getElementById('pose-preview-canvas');
+          if (!canvas) return;
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+          };
+          img.src = 'data:image/jpeg;base64,' + res.image;
         }
       } catch (e) {}
     }, 500);
@@ -420,15 +442,10 @@ const App = {
     // Stop pose preview
     this._stopPosePreview();
     this._currentRunStep = null;
-    // Hide preview after short delay so user can see final frame
-    setTimeout(() => {
-      const wrap = document.getElementById('pose-preview-wrap');
-      // Only hide if no longer running
-      if (!this._running && wrap) wrap.style.display = 'none';
-    }, 3000);
 
     await this.updateStepStatuses();
     if (target === 'calibration') await Calib.loadResults();
+    if (target === 'processing') await this.loadSyncOffsets();
   },
 
   appendLog(target, line) {
@@ -486,6 +503,56 @@ const App = {
         : '<span class="file-missing">No files</span>';
       return `<div class="cam-entry"><span class="cam-name">${cam.camera}</span><div class="cam-files">${files}</div></div>`;
     }).join('');
+  },
+
+  // ─── Sync Offsets & Trim ─────────────────────────────────────
+
+  async loadSyncOffsets() {
+    const card = document.getElementById('sync-offsets-card');
+    const grid = document.getElementById('sync-offsets-grid');
+    const summary = document.getElementById('sync-offsets-summary');
+    const trimBtn = document.getElementById('btn-trim-videos');
+    if (!card) return;
+    try {
+      const res = await pywebview.api.compute_sync_offsets();
+      if (!res.success) { card.style.display = 'none'; if (trimBtn) trimBtn.style.display = 'none'; return; }
+
+      let html = '';
+      for (const cam of res.cameras) {
+        const offset = cam.sync_first;
+        const sign = offset > 0 ? `+${offset}` : `${offset}`;
+        const isRef = cam.name === res.ref_cam;
+        html += `<div class="sync-offset-item${isRef ? ' ref' : ''}">` +
+          `<span class="sync-offset-cam">${cam.name.split('_')[0]}${isRef ? ' (ref)' : ''}</span>` +
+          `<span class="sync-offset-val">${sign} fr</span>` +
+          `<span class="sync-offset-range">${cam.sync_first}–${cam.sync_last}</span>` +
+          `</div>`;
+      }
+      grid.innerHTML = html;
+
+      const dur = (res.common_frames / res.fps).toFixed(1);
+      summary.innerHTML = `Common range: frame ${res.common_first}–${res.common_last} (${res.common_frames} frames, ${dur}s at ${res.fps} fps)`;
+      card.style.display = '';
+      if (trimBtn) trimBtn.style.display = '';
+    } catch (e) {
+      card.style.display = 'none';
+      if (trimBtn) trimBtn.style.display = 'none';
+    }
+  },
+
+  async trimSyncedVideos() {
+    this.appendLog('processing', '[INFO] Starting video trimming based on sync offsets...');
+    const statusEl = document.getElementById('run-status-processing');
+    if (statusEl) { statusEl.textContent = 'Trimming...'; statusEl.className = 'run-status running'; }
+
+    const result = await pywebview.api.trim_synced_videos();
+    if (!result.success) {
+      this.appendLog('processing', '[ERROR] ' + result.error);
+      if (statusEl) { statusEl.textContent = 'Failed'; statusEl.className = 'run-status error'; }
+      return;
+    }
+    // Poll logs until done
+    this.startLogPoll('processing');
   },
 
   // ─── TRC Files ──────────────────────────────────────────────
@@ -829,6 +896,10 @@ const Calib = {
   _panStartY: 0,
   _panStartOfsX: 0,
   _panStartOfsY: 0,
+  _previewPrevPoints: null,  // dim preview of previous points during choice
+  _currentCamName: '',
+
+  _prevPoints: {},   // cam_name → [[x,y], ...] from Image_points.json
 
   async startExtrinsic() {
     // Load 3D reference points
@@ -837,6 +908,13 @@ const Calib = {
     this._objCoords = coordsResult.coords;
     this._allCamData = [];
     this._camIndex = 0;
+
+    // Load previously clicked points (if any)
+    this._prevPoints = {};
+    try {
+      const prev = await pywebview.api.load_image_points();
+      if (prev.success && prev.cameras) this._prevPoints = prev.cameras;
+    } catch (e) { /* no previous points */ }
 
     // Show the clicker UI
     document.getElementById('calib-clicker').style.display = '';
@@ -863,6 +941,7 @@ const Calib = {
     this._totalCams = result.total_cameras;
     this._imgW = result.width;
     this._imgH = result.height;
+    this._currentCamName = result.cam_name;
 
     // Update UI labels
     document.getElementById('calib-cam-label').textContent =
@@ -872,18 +951,83 @@ const Calib = {
 
     // Load image
     this._img = new Image();
-    this._img.onload = () => this._initCanvas();
+    this._img.onload = () => {
+      this._initCanvas();
+      // Check for previously clicked points
+      const prev = this._prevPoints[result.cam_name];
+      if (prev && prev.length > 0) {
+        this._showPrevPointsChoice(prev);
+      } else {
+        this._hidePrevPointsChoice();
+      }
+    };
     this._img.src = 'data:image/jpeg;base64,' + result.image;
 
     // Reset point list highlights
     this._renderObjPtsList();
   },
 
+  _showPrevPointsChoice(prevPts) {
+    // Show previous points on canvas as dim markers, then show choice overlay
+    this._previewPrevPoints = prevPts;
+    this._redraw();  // will draw preview points
+
+    let overlay = document.getElementById('calib-prev-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'calib-prev-overlay';
+      overlay.className = 'calib-prev-overlay';
+      overlay.innerHTML = `
+        <div class="calib-prev-card">
+          <div class="calib-prev-title">Previous Points Found</div>
+          <div class="calib-prev-desc"><span id="calib-prev-count"></span> points from a previous session are available for this camera.</div>
+          <div class="calib-prev-actions">
+            <button class="btn" id="calib-prev-use">Use Previous</button>
+            <button class="btn-ghost" id="calib-prev-reclick">Re-click</button>
+          </div>
+        </div>`;
+      document.querySelector('.calib-canvas-wrap').appendChild(overlay);
+    }
+    overlay.style.display = '';
+    document.getElementById('calib-prev-count').textContent = prevPts.length;
+    document.getElementById('calib-prev-use').onclick = () => this._usePrevPoints(prevPts);
+    document.getElementById('calib-prev-reclick').onclick = () => this._reclickPoints();
+  },
+
+  _hidePrevPointsChoice() {
+    this._previewPrevPoints = null;
+    const overlay = document.getElementById('calib-prev-overlay');
+    if (overlay) overlay.style.display = 'none';
+  },
+
+  _usePrevPoints(prevPts) {
+    // Load previous points directly and auto-confirm
+    this._clickedPoints = prevPts.map(p => [...p]);
+    this._previewPrevPoints = null;
+    this._hidePrevPointsChoice();
+    this._updatePointCount();
+    this._renderObjPtsList();
+    this._redraw();
+    document.getElementById('calib-confirm-btn').disabled = this._clickedPoints.length < 6;
+    App.appendLog('calibration', `[INFO] ${this._currentCamName}: loaded ${prevPts.length} previous points`);
+  },
+
+  _reclickPoints() {
+    // Dismiss overlay, start fresh
+    this._clickedPoints = [];
+    this._previewPrevPoints = null;
+    this._hidePrevPointsChoice();
+    this._updatePointCount();
+    this._renderObjPtsList();
+    this._redraw();
+    document.getElementById('calib-confirm-btn').disabled = true;
+  },
+
   _initCanvas() {
     this._canvas = document.getElementById('calib-canvas');
     const wrap = this._canvas.parentElement;
     const maxW = wrap.clientWidth;
-    const scale = Math.min(maxW / this._imgW, 500 / this._imgH, 1);
+    const scale = Math.min(maxW / this._imgW, 800 / this._imgH, 1);
     const dispW = Math.round(this._imgW * scale);
     const dispH = Math.round(this._imgH * scale);
 
@@ -1066,6 +1210,29 @@ const Calib = {
       ctx.fillText(`${i + 1}`, x + crossSize + 3, y - 4);
     });
 
+    // Draw preview of previous points (dim, before the choice is made)
+    if (this._previewPrevPoints && this._previewPrevPoints.length > 0) {
+      const prevCross = Math.max(8, 12 / this._zoom);
+      this._previewPrevPoints.forEach((pt, i) => {
+        const [x, y] = this._imgToCanvas(pt[0], pt[1]);
+        ctx.strokeStyle = 'rgba(255,214,10,0.45)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x - prevCross, y); ctx.lineTo(x + prevCross, y);
+        ctx.moveTo(x, y - prevCross); ctx.lineTo(x, y + prevCross);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,214,10,0.45)';
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,214,10,0.45)';
+        ctx.font = '10px monospace';
+        ctx.fillText(`${i + 1}`, x + prevCross + 3, y - 4);
+      });
+    }
+
     // Draw next point guide (fixed at bottom of canvas, screen space)
     if (this._clickedPoints.length < this._objCoords.length) {
       const nextIdx = this._clickedPoints.length;
@@ -1116,14 +1283,13 @@ const Calib = {
     }
 
     // Store data for this camera
-    const frame = await pywebview.api.get_extrinsic_frame(this._camIndex);
     this._allCamData.push({
       cam_index: this._camIndex,
-      cam_name: frame.cam_name,
+      cam_name: this._currentCamName,
       points: [...this._clickedPoints],
     });
 
-    App.appendLog('calibration', `[INFO] ${frame.cam_name}: ${this._clickedPoints.length} points confirmed`);
+    App.appendLog('calibration', `[INFO] ${this._currentCamName}: ${this._clickedPoints.length} points confirmed`);
 
     // Move to next camera
     if (this._camIndex + 1 < this._totalCams) {
@@ -1269,6 +1435,23 @@ const Calib = {
       }
     } catch (e) {
       document.getElementById('calib-results-card').style.display = 'none';
+    }
+  },
+
+  async loadReferenceImage() {
+    const card = document.getElementById('calib-reference-card');
+    const img = document.getElementById('calib-reference-img');
+    if (!card || !img) return;
+    try {
+      const res = await pywebview.api.get_reference_image();
+      if (res.success && res.image) {
+        img.src = 'data:image/png;base64,' + res.image;
+        card.style.display = '';
+      } else {
+        card.style.display = 'none';
+      }
+    } catch (e) {
+      card.style.display = 'none';
     }
   },
 };
