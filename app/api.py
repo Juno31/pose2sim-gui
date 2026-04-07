@@ -1126,6 +1126,7 @@ class Api:
                 sync_frames = [extract_frame(f) for f in sync_files]
                 sync_first = min(sync_frames)
                 sync_last = max(sync_frames)
+                sync_count = len(sync_files)
 
                 # Get original frame count
                 orig_dir = os.path.join(pose_dir, cam_dir_name)
@@ -1133,24 +1134,32 @@ class Api:
                 if os.path.isdir(orig_dir):
                     orig_count = len([f for f in os.listdir(orig_dir) if f.endswith('.json')])
 
+                # Pose2Sim pads the beginning of each camera's synced data with
+                # empty frames to align them. The padding = synced_count - original_count.
+                # Real data starts at synced frame (padding + sync_first).
+                padding = max(0, sync_count - orig_count)
+                real_data_start = sync_first + padding  # first synced frame with real data
+
                 cameras.append({
                     "name": cam_prefix,
                     "dir_name": cam_dir_name,
                     "sync_first": sync_first,
                     "sync_last": sync_last,
-                    "sync_count": len(sync_files),
+                    "sync_count": sync_count,
                     "orig_count": orig_count,
+                    "padding": padding,
+                    "real_data_start": real_data_start,
                 })
 
             if not cameras:
                 return {"success": False, "error": "No camera data found"}
 
-            # Find common frame range (intersection of all cameras' synced ranges)
-            common_first = max(c["sync_first"] for c in cameras)
+            # Common range = where ALL cameras have real (non-padded) data
+            common_first = max(c["real_data_start"] for c in cameras)
             common_last = min(c["sync_last"] for c in cameras)
 
-            # Reference camera = the one with the fewest original frames
-            ref_idx = min(range(len(cameras)), key=lambda i: cameras[i]["orig_count"])
+            # Reference camera = the one with the fewest original frames (least padding)
+            ref_idx = min(range(len(cameras)), key=lambda i: cameras[i]["padding"])
 
             return {
                 "success": True,
@@ -1202,6 +1211,7 @@ class Api:
 
         # Map synced frame numbers back to original frame numbers:
         # orig_frame = synced_frame - sync_first
+        common_frames = common_last - common_first + 1
         cam_trim_info = []
         for cam in cameras:
             # Find the video file matching this camera
@@ -1216,9 +1226,11 @@ class Api:
             cam_trim_info.append({
                 "name": cam["name"],
                 "vid_file": vid_file,
+                "padding": cam["padding"],
                 "sync_first": cam["sync_first"],
                 "common_first": common_first,
                 "common_last": common_last,
+                "common_frames": common_frames,
             })
 
         # Write trim script — use triple-quoted template to avoid escaping issues
@@ -1239,20 +1251,27 @@ try:
         vid_name = os.path.basename(vid_path)
         out_path = os.path.join(out_dir, vid_name)
 
-        # Map synced frame range back to original frames
-        orig_start = ci['common_first'] - ci['sync_first']
-        orig_end = ci['common_last'] - ci['sync_first']
+        # Map synced frame range back to original video frames.
+        # Synced frame N corresponds to original frame (N - padding - sync_first + 1)
+        # since the first 'padding' synced frames are empty/padded.
+        # common_first is guaranteed >= (padding + sync_first) for all cameras.
+        padding = ci['padding']
+        sync_first = ci['sync_first']
+        orig_start = ci['common_first'] - padding - sync_first
         orig_start = max(0, orig_start)
+        # All cameras must output exactly the same number of frames
+        trim_frames = ci['common_frames']
 
         cap = cv2.VideoCapture(vid_path)
         W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         vid_fps = round(cap.get(cv2.CAP_PROP_FPS))
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        orig_end = min(orig_end, total - 1)
-        trim_frames = orig_end - orig_start + 1
+        # Clamp if video is shorter than expected
+        if orig_start + trim_frames > total:
+            trim_frames = max(0, total - orig_start)
 
-        logging.info(f"[INFO] {{vid_name}}: trimming frames {{orig_start}}-{{orig_end}} ({{trim_frames}} frames, {{trim_frames/vid_fps:.1f}}s)")
+        logging.info(f"[INFO] {{vid_name}}: trimming frames {{orig_start}}-{{orig_start + trim_frames - 1}} ({{trim_frames}} frames, {{trim_frames/vid_fps:.1f}}s) [padding={{padding}}]")
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         writer = cv2.VideoWriter(out_path, fourcc, vid_fps, (W, H))
