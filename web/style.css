@@ -134,6 +134,13 @@ body { display: flex; overflow: hidden; }
   letter-spacing: 0.5px;
   margin-bottom: 16px;
 }
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.section-header-row h2 { margin-bottom: 0; }
 
 /* ─── Fields ─── */
 .field {
@@ -367,6 +374,9 @@ input[type="radio"] { display: none; }
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 .console .log-error { color: var(--red); }
@@ -489,6 +499,52 @@ input[type="radio"] { display: none; }
 .marker-tag.required { border-color: rgba(48,209,88,0.3); color: var(--green); }
 .marker-tag.missing { border-color: rgba(255,69,58,0.3); color: var(--red); }
 
+/* ─── 2D Pose Overlay Video ─── */
+.pose-video-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.pose-tab {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pose-tab:hover { border-color: var(--border-focus); color: var(--text); }
+.pose-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.pose-video-wrap {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #050505;
+}
+.pose-video-player {
+  width: 100%;
+  max-height: 500px;
+  display: block;
+  background: #000;
+}
+.pose-video-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.pose-video-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  margin-left: auto;
+}
+
 /* ─── 3D Viewer ─── */
 .viewer-3d-wrap {
   border-radius: var(--radius-sm);
@@ -563,6 +619,7 @@ input[type="radio"] { display: none; }
 .calib-grid-right {
   align-self: start;
   overflow: hidden;
+  max-height: 100%;
 }
 .calib-reference-section {
   height: 100%;
@@ -579,11 +636,14 @@ input[type="radio"] { display: none; }
   display: flex;
   align-items: center;
   justify-content: center;
+  max-height: calc(100% - 40px); /* leave room for heading */
 }
 .calib-reference-img {
   display: block;
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
 }
 /* Single column when no reference image */
@@ -777,25 +837,15 @@ input[type="radio"] { display: none; }
 /* ─── Processing Grid ─── */
 .proc-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   grid-template-rows: auto auto;
   grid-auto-rows: auto;
   gap: 8px;
 }
-
-/* Log cell height constraints */
-.proc-log {
-  min-height: 300px;
-  max-height: calc(100vh - 140px);
-  overflow: hidden;
-}
-
-/* Log spans 2 rows on right column */
-.proc-pose  { grid-column: 1; grid-row: 1; }
-.proc-sync  { grid-column: 2; grid-row: 1; }
-.proc-log   { grid-column: 3; grid-row: 1 / 3; }
+.proc-pose   { grid-column: 1; grid-row: 1; }
+.proc-sync   { grid-column: 2; grid-row: 1; }
 .proc-triang { grid-column: 1; grid-row: 2; }
-.proc-filt  { grid-column: 2; grid-row: 2; }
+.proc-filt   { grid-column: 2; grid-row: 2; }
 
 .proc-cell > .step-details {
   height: 100%;
@@ -806,40 +856,36 @@ input[type="radio"] { display: none; }
   flex: 1;
 }
 
-.proc-log-inner {
-  height: 100%;
+/* Per-step inline log */
+.step-log {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.step-log-bar {
   display: flex;
-  flex-direction: column;
-  background: var(--bg-raised) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius) !important;
-  padding: 14px 16px !important;
-  overflow: hidden;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
 }
-.proc-log-inner .console {
-  flex: 1;
-  min-height: 200px;
-  max-height: calc(100vh - 240px);
+.step-console {
+  min-height: 60px;
+  max-height: 180px;
   overflow-y: auto;
+  font-size: 11px;
 }
-.proc-log-title {
-  font-size: 14px;
-  font-weight: 550;
-  color: var(--text);
-  letter-spacing: -0.2px;
+.btn-sm {
+  font-size: 11px;
+  padding: 3px 10px;
 }
 
-/* Wrap to 2 columns when narrow */
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .proc-grid {
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto auto;
+    grid-template-columns: 1fr;
   }
-  .proc-pose  { grid-column: 1; grid-row: 1; }
-  .proc-sync  { grid-column: 2; grid-row: 1; }
-  .proc-triang { grid-column: 1; grid-row: 2; }
-  .proc-filt  { grid-column: 2; grid-row: 2; }
-  .proc-log   { grid-column: 1 / 3; grid-row: 3; }
+  .proc-pose, .proc-sync, .proc-triang, .proc-filt {
+    grid-column: 1;
+  }
 }
 
 /* ─── Sync Offsets Card ─── */
@@ -892,6 +938,79 @@ input[type="radio"] { display: none; }
 .sync-offsets-summary {
   font-size: 11px;
   color: var(--text-3);
+}
+
+/* ─── Multi-Camera Sync Player ─── */
+#multicam-player-section {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.multicam-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.multicam-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.multicam-source-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.multicam-source-badge.synced { background: rgba(48,209,88,0.15); color: var(--green); }
+.multicam-source-badge.original { background: rgba(255,214,10,0.15); color: var(--yellow); }
+
+.multicam-grid {
+  display: grid;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #050505;
+  border: 1px solid var(--border);
+}
+.multicam-cell {
+  position: relative;
+  background: #000;
+}
+.multicam-label {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.7);
+  background: rgba(0,0,0,0.6);
+  padding: 2px 8px;
+  border-radius: 4px;
+  z-index: 2;
+  pointer-events: none;
+}
+.multicam-video {
+  width: 100%;
+  display: block;
+  background: #000;
+}
+.multicam-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.multicam-slider {
+  flex: 1;
+  min-width: 100px;
+}
+.multicam-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
 }
 
 /* ─── Live Pose Preview ─── */

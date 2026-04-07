@@ -151,6 +151,45 @@ const App = {
   },
 
   async onProjectLoaded(cfg) {
+    // ── Reset all stale state from previous project ──
+    // Stop any running timers/polls
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    this._stopPosePreview();
+    this._currentRunStep = null;
+
+    // Clear all log panels
+    ['pose', 'sync', 'triang', 'filt', 'calibration', 'visualization'].forEach(id => {
+      const log = document.getElementById(`log-${id}`);
+      if (log) log.textContent = '';
+      const status = document.getElementById(`run-status-${id}`);
+      if (status) { status.textContent = ''; status.className = 'run-status'; }
+      const prog = document.getElementById(`progress-${id}`);
+      if (prog) { prog.style.width = '0%'; prog.classList.remove('indeterminate'); }
+    });
+
+    // Reset Viewer3D
+    if (Viewer3D._playTimer) { clearInterval(Viewer3D._playTimer); Viewer3D._playTimer = null; }
+    Viewer3D._frames = [];
+    Viewer3D._currentFrame = 0;
+    const section3d = document.getElementById('viz-3d-section');
+    if (section3d) section3d.style.display = 'none';
+
+    // Reset Calib state
+    Calib._clickedPoints = [];
+    Calib._allCamData = [];
+    Calib._prevPoints = [];
+    Calib._camIndex = 0;
+
+    // Reset multicam player
+    this._multicamPause && this._multicamPause();
+    this._multicamVideos = [];
+
+    // Reset pose video player
+    const posePlayer = document.getElementById('pose-video-player');
+    if (posePlayer) { posePlayer.pause(); posePlayer.removeAttribute('src'); posePlayer.load(); }
+    this._poseVideos = [];
+
+    // ── Load new project data ──
     document.getElementById('project-info').innerHTML =
       `<strong>${cfg.project_name}</strong><br>${cfg.camera_count} cameras &bull; ${cfg.pose_estimator}`;
     if (cfg.project_dir) document.getElementById('open-project-dir').value = cfg.project_dir;
@@ -203,7 +242,7 @@ const App = {
     this.setCheckbox('pose-display', ps.display_detection ?? true);
 
     const sy = t.synchronization || {};
-    this.setVal('sync-peak-time', sy.approx_time_maxspeed ?? 0.5);
+    this.setVal('sync-peak-time', Array.isArray(sy.approx_time_maxspeed) ? sy.approx_time_maxspeed[0] : (sy.approx_time_maxspeed ?? 'auto'));
     this.setVal('sync-range', sy.time_range_around_maxspeed ?? 2.0);
     this.setVal('sync-cutoff', sy.filter_cutoff ?? 6.0);
     this.setVal('sync-order', sy.filter_order ?? 4);
@@ -245,6 +284,7 @@ const App = {
     this.setCheckbox('viz-c3d', ma.make_c3d ?? true);
 
     await this.loadTrcFiles();
+    await this.loadPoseVideos();
   },
 
   // ─── Save Configs ───────────────────────────────────────────
@@ -294,7 +334,7 @@ const App = {
 
   async saveSyncConfig() {
     const res = await pywebview.api.save_config([
-      ['synchronization', 'approx_time_maxspeed', parseFloat(this.getVal('sync-peak-time'))],
+      ['synchronization', 'approx_time_maxspeed', (() => { const v = this.getVal('sync-peak-time').trim(); if (v === 'auto' || v === '') return 'auto'; const n = parseFloat(v); return isNaN(n) ? 'auto' : [n]; })()],
       ['synchronization', 'time_range_around_maxspeed', parseFloat(this.getVal('sync-range'))],
       ['synchronization', 'filter_cutoff', parseFloat(this.getVal('sync-cutoff'))],
       ['synchronization', 'filter_order', parseInt(this.getVal('sync-order'))],
@@ -348,10 +388,15 @@ const App = {
   // ─── Pipeline Execution ─────────────────────────────────────
 
   _logTarget(stepName) {
-    const processingSteps = ['poseEstimation', 'synchronization', 'triangulation', 'filtering'];
-    if (processingSteps.includes(stepName)) return 'processing';
-    if (stepName === 'calibration') return 'calibration';
-    return 'visualization';
+    const map = {
+      poseEstimation: 'pose',
+      synchronization: 'sync',
+      triangulation: 'triang',
+      filtering: 'filt',
+      calibration: 'calibration',
+      calibration_full: 'calibration',
+    };
+    return map[stepName] || 'visualization';
   },
 
   async runStep(stepName) {
@@ -449,7 +494,8 @@ const App = {
 
     await this.updateStepStatuses();
     if (target === 'calibration') await Calib.loadResults();
-    if (target === 'processing') await this.loadSyncOffsets();
+    if (target === 'sync') await this.loadSyncOffsets();
+    if (target === 'pose') await this.loadPoseVideos();
   },
 
   appendLog(target, line) {
@@ -463,7 +509,7 @@ const App = {
         if (info) info.textContent = `${vidName} (${vidIdx}/${totalVids}) — Frame ${current}/${total}`;
         const bar = document.getElementById('pose-preview-bar');
         if (bar) bar.style.width = pct + '%';
-        const progressEl = document.getElementById('progress-processing');
+        const progressEl = document.getElementById('progress-pose');
         if (progressEl) {
           progressEl.classList.remove('indeterminate');
           // Overall progress across all videos
@@ -542,21 +588,143 @@ const App = {
       card.style.display = 'none';
       if (trimBtn) trimBtn.style.display = 'none';
     }
+    // Load multi-camera video player
+    await this.loadMulticamPlayer();
   },
 
   async trimSyncedVideos() {
-    this.appendLog('processing', '[INFO] Starting video trimming based on sync offsets...');
-    const statusEl = document.getElementById('run-status-processing');
+    this.appendLog('sync', '[INFO] Starting video trimming based on sync offsets...');
+    const statusEl = document.getElementById('run-status-sync');
     if (statusEl) { statusEl.textContent = 'Trimming...'; statusEl.className = 'run-status running'; }
 
     const result = await pywebview.api.trim_synced_videos();
     if (!result.success) {
-      this.appendLog('processing', '[ERROR] ' + result.error);
+      this.appendLog('sync', '[ERROR] ' + result.error);
       if (statusEl) { statusEl.textContent = 'Failed'; statusEl.className = 'run-status error'; }
       return;
     }
     // Poll logs until done
-    this.startLogPoll('processing');
+    this.startLogPoll('sync');
+  },
+
+  // ─── Multi-Camera Synchronized Video Player ────────────────
+
+  _multicamVideos: [],
+  _multicamPlaying: false,
+  _multicamRAF: null,
+
+  async loadMulticamPlayer() {
+    const section = document.getElementById('multicam-player-section');
+    if (!section) return;
+    try {
+      const res = await pywebview.api.list_sync_videos();
+      if (!res.videos || res.videos.length === 0) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+      this._multicamVideos = [];
+
+      // Show source badge
+      const badge = document.getElementById('multicam-source-badge');
+      if (badge) {
+        badge.textContent = res.synced ? 'Trimmed' : 'Original';
+        badge.className = 'multicam-source-badge ' + (res.synced ? 'synced' : 'original');
+      }
+
+      // Build grid of video elements
+      const grid = document.getElementById('multicam-grid');
+      const cols = res.videos.length <= 2 ? res.videos.length : (res.videos.length <= 4 ? 2 : 3);
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      grid.innerHTML = res.videos.map((v, i) =>
+        `<div class="multicam-cell">
+          <div class="multicam-label">${v.label}</div>
+          <video id="multicam-vid-${i}" class="multicam-video" preload="auto" muted>
+            <source src="${v.url}" type="video/mp4">
+          </video>
+        </div>`
+      ).join('');
+
+      // Wait for all videos to be loadable
+      const videoEls = [];
+      for (let i = 0; i < res.videos.length; i++) {
+        const vid = document.getElementById(`multicam-vid-${i}`);
+        videoEls.push(vid);
+      }
+      this._multicamVideos = videoEls;
+
+      // When metadata loads, set slider max to duration
+      videoEls[0].addEventListener('loadedmetadata', () => {
+        const slider = document.getElementById('multicam-slider');
+        if (slider) slider.max = videoEls[0].duration;
+      });
+    } catch (e) {
+      section.style.display = 'none';
+    }
+  },
+
+  multicamTogglePlay() {
+    if (this._multicamPlaying) {
+      this._multicamPause();
+    } else {
+      this._multicamPlay();
+    }
+  },
+
+  _multicamPlay() {
+    this._multicamPlaying = true;
+    const btn = document.getElementById('multicam-play-btn');
+    if (btn) btn.innerHTML = '&#9646;&#9646; Pause';
+    // Start all videos simultaneously
+    const promises = this._multicamVideos.map(v => v.play().catch(() => {}));
+    Promise.all(promises);
+    this._multicamUpdateLoop();
+  },
+
+  _multicamPause() {
+    this._multicamPlaying = false;
+    const btn = document.getElementById('multicam-play-btn');
+    if (btn) btn.innerHTML = '&#9654; Play All';
+    this._multicamVideos.forEach(v => v.pause());
+    if (this._multicamRAF) cancelAnimationFrame(this._multicamRAF);
+  },
+
+  _multicamUpdateLoop() {
+    if (!this._multicamPlaying) return;
+    const ref = this._multicamVideos[0];
+    if (ref) {
+      const slider = document.getElementById('multicam-slider');
+      const timeEl = document.getElementById('multicam-time');
+      if (slider) slider.value = ref.currentTime;
+      if (timeEl) timeEl.textContent = `${ref.currentTime.toFixed(2)}s / ${ref.duration ? ref.duration.toFixed(2) : '?'}s`;
+    }
+    this._multicamRAF = requestAnimationFrame(() => this._multicamUpdateLoop());
+  },
+
+  multicamSeek(time) {
+    const t = parseFloat(time);
+    this._multicamVideos.forEach(v => { v.currentTime = t; });
+    const timeEl = document.getElementById('multicam-time');
+    const ref = this._multicamVideos[0];
+    if (timeEl && ref) timeEl.textContent = `${t.toFixed(2)}s / ${ref.duration ? ref.duration.toFixed(2) : '?'}s`;
+  },
+
+  multicamStep(dir) {
+    const fps = 60; // default, can be refined
+    const dt = dir / fps;
+    this._multicamVideos.forEach(v => {
+      v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + dt));
+    });
+    const ref = this._multicamVideos[0];
+    const slider = document.getElementById('multicam-slider');
+    const timeEl = document.getElementById('multicam-time');
+    if (ref && slider) slider.value = ref.currentTime;
+    if (ref && timeEl) timeEl.textContent = `${ref.currentTime.toFixed(2)}s / ${ref.duration ? ref.duration.toFixed(2) : '?'}s`;
+  },
+
+  multicamSetSpeed(speed) {
+    const s = parseFloat(speed);
+    this._multicamVideos.forEach(v => { v.playbackRate = s; });
   },
 
   // ─── TRC Files ──────────────────────────────────────────────
@@ -578,6 +746,11 @@ const App = {
     }
     sel.innerHTML = '<option value="">Select a file...</option>' +
       files.map(f => `<option value="${f}">${f.split('/').pop()}</option>`).join('');
+  },
+
+  async refreshTrcFiles() {
+    await this.loadTrcFiles();
+    await this.loadPoseVideos();
   },
 
   async onTrcSelected() {
@@ -616,6 +789,72 @@ const App = {
     // Load 3D data
     section3d.style.display = '';
     Viewer3D.loadTrc(path, info.frame_rate);
+  },
+
+  // ─── 2D Pose Overlay Videos ─────────────────────────────────
+
+  _poseVideos: [],
+  _poseVideoIdx: 0,
+
+  async loadPoseVideos() {
+    const videos = await pywebview.api.list_pose_videos();
+    this._poseVideos = videos || [];
+    const emptyEl = document.getElementById('pose-video-empty');
+    const sectionEl = document.getElementById('pose-video-section');
+    if (!videos || videos.length === 0) {
+      emptyEl.style.display = '';
+      sectionEl.style.display = 'none';
+      return;
+    }
+    emptyEl.style.display = 'none';
+    sectionEl.style.display = '';
+
+    // Build camera tabs
+    const tabsEl = document.getElementById('pose-video-tabs');
+    tabsEl.innerHTML = videos.map((v, i) =>
+      `<button class="pose-tab ${i === 0 ? 'active' : ''}" onclick="App.selectPoseVideo(${i})">${v.label}</button>`
+    ).join('');
+
+    // Load first video
+    this.selectPoseVideo(0);
+  },
+
+  selectPoseVideo(idx) {
+    this._poseVideoIdx = idx;
+    const v = this._poseVideos[idx];
+    if (!v) return;
+    const player = document.getElementById('pose-video-player');
+    player.src = v.url;
+    player.load();
+
+    // Update active tab
+    document.querySelectorAll('.pose-tab').forEach((tab, i) => {
+      tab.classList.toggle('active', i === idx);
+    });
+
+    // Update time display on timeupdate
+    player.ontimeupdate = () => {
+      const timeEl = document.getElementById('pose-video-time');
+      if (timeEl) {
+        const cur = player.currentTime.toFixed(2);
+        const dur = player.duration ? player.duration.toFixed(2) : '?';
+        timeEl.textContent = `${cur}s / ${dur}s`;
+      }
+    };
+  },
+
+  poseVideoStep(dir) {
+    const player = document.getElementById('pose-video-player');
+    if (!player || !player.duration) return;
+    // Estimate frame duration (~30fps default, but use actual if available)
+    const fps = 30;
+    const frameDur = 1.0 / fps;
+    player.currentTime = Math.max(0, Math.min(player.duration, player.currentTime + dir * frameDur));
+  },
+
+  setPoseVideoSpeed(speed) {
+    const player = document.getElementById('pose-video-player');
+    if (player) player.playbackRate = parseFloat(speed);
   },
 
   // ─── Filter Type Toggle ─────────────────────────────────────
@@ -676,6 +915,9 @@ const Viewer3D = {
     ['Neck', 'LShoulder'], ['LShoulder', 'LElbow'], ['LElbow', 'LWrist'],
   ],
 
+  _grid: null,
+  _axes: null,
+
   _initScene() {
     const container = document.getElementById('viewer-3d');
     if (!container) return;
@@ -687,7 +929,8 @@ const Viewer3D = {
     this._scene = new THREE.Scene();
     this._scene.background = new THREE.Color(0x050505);
 
-    this._camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 100);
+    // Use generous clipping planes; will be adjusted after data loads
+    this._camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100000);
     this._camera.position.set(2, 1.5, 3);
     this._camera.lookAt(0, 0.8, 0);
 
@@ -708,13 +951,13 @@ const Viewer3D = {
     dir.position.set(3, 5, 3);
     this._scene.add(dir);
 
-    // Grid
-    const grid = new THREE.GridHelper(4, 20, 0x222222, 0x1a1a1a);
-    this._scene.add(grid);
+    // Grid (placeholder; rebuilt after data loads)
+    this._grid = new THREE.GridHelper(4, 20, 0x222222, 0x1a1a1a);
+    this._scene.add(this._grid);
 
     // Axes
-    const axes = new THREE.AxesHelper(0.3);
-    this._scene.add(axes);
+    this._axes = new THREE.AxesHelper(0.3);
+    this._scene.add(this._axes);
 
     this._animate();
     this._initialized = true;
@@ -761,6 +1004,12 @@ const Viewer3D = {
     this._updateLabel();
   },
 
+  /** Check if a point is valid (not null, not NaN, not all zeros = missing) */
+  _isValid(p) {
+    return p && p[0] !== null && !isNaN(p[0]) &&
+           !(p[0] === 0 && p[1] === 0 && p[2] === 0);
+  },
+
   _buildMarkers() {
     // Remove old
     this._spheres.forEach(s => this._scene.remove(s));
@@ -768,8 +1017,57 @@ const Viewer3D = {
     this._spheres = [];
     this._bones = [];
 
-    // Create spheres for each marker
-    const geo = new THREE.SphereGeometry(0.012, 12, 12);
+    // Build marker index for skeleton & body-scale estimation
+    const markerIdx = {};
+    this._markers.forEach((m, i) => markerIdx[m] = i);
+
+    // Collect all valid (non-zero) points across first few frames
+    const samplePts = [];
+    const sampleCount = Math.min(20, this._frames.length);
+    for (let fi = 0; fi < sampleCount; fi++) {
+      for (const p of this._frames[fi].p) {
+        if (this._isValid(p)) samplePts.push(p);
+      }
+    }
+
+    // Estimate body scale from known joint distances (Hip→Neck, Hip→Knee, etc.)
+    let bodyScale = 0;
+    const scalePairs = [['Hip','Neck'], ['Hip','RKnee'], ['Hip','LKnee'], ['Neck','Head'], ['RKnee','RAnkle'], ['LKnee','LAnkle']];
+    let pairCount = 0;
+    for (let fi = 0; fi < sampleCount; fi++) {
+      const pts = this._frames[fi].p;
+      for (const [a, b] of scalePairs) {
+        if (a in markerIdx && b in markerIdx) {
+          const pa = pts[markerIdx[a]], pb = pts[markerIdx[b]];
+          if (this._isValid(pa) && this._isValid(pb)) {
+            const d = Math.sqrt((pa[0]-pb[0])**2 + (pa[1]-pb[1])**2 + (pa[2]-pb[2])**2);
+            if (d > 0.001) { bodyScale += d; pairCount++; }
+          }
+        }
+      }
+    }
+    // Average bone length; sphere radius = ~5% of avg bone length
+    if (pairCount > 0) bodyScale = bodyScale / pairCount;
+
+    // Fallback: use data extent if no body pairs found
+    let dataScale = 1;
+    if (samplePts.length > 0) {
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+      for (const p of samplePts) {
+        minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+        minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+        minZ = Math.min(minZ, p[2]); maxZ = Math.max(maxZ, p[2]);
+      }
+      dataScale = Math.max(maxX-minX, maxY-minY, maxZ-minZ, 0.001);
+    }
+
+    if (bodyScale <= 0) bodyScale = dataScale * 0.05; // fallback
+    const sphereRadius = bodyScale * 0.04; // small joint marker
+    console.log('[Viewer3D] bodyScale =', bodyScale.toFixed(2), ', sphereRadius =', sphereRadius.toFixed(3), ', dataScale =', dataScale.toFixed(1));
+
+    const geo = new THREE.SphereGeometry(sphereRadius, 12, 12);
     const colors = [0x0a84ff, 0x30d158, 0xff453a, 0xffd60a, 0xff9f0a, 0xbf5af2, 0x64d2ff, 0xac8e68];
     for (let i = 0; i < this._markers.length; i++) {
       const mat = new THREE.MeshStandardMaterial({ color: colors[i % colors.length], emissive: colors[i % colors.length], emissiveIntensity: 0.3 });
@@ -779,14 +1077,12 @@ const Viewer3D = {
       this._spheres.push(sphere);
     }
 
-    // Build skeleton lines
-    const markerIdx = {};
-    this._markers.forEach((m, i) => markerIdx[m] = i);
-    const lineMat = new THREE.LineBasicMaterial({ color: 0x444444, linewidth: 1 });
+    // Build skeleton lines using cylinders for visibility
+    const boneMat = new THREE.LineBasicMaterial({ color: 0xcccccc, linewidth: 2 });
     for (const [a, b] of this.SKELETON_PAIRS) {
       if (a in markerIdx && b in markerIdx) {
         const geom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-        const line = new THREE.Line(geom, lineMat);
+        const line = new THREE.Line(geom, boneMat);
         line.userData = { idxA: markerIdx[a], idxB: markerIdx[b] };
         line.visible = false;
         this._scene.add(line);
@@ -794,17 +1090,40 @@ const Viewer3D = {
       }
     }
 
-    // Auto-fit camera to first frame
-    if (this._frames.length > 0) {
-      const pts = this._frames[0].p.filter(p => p[0] !== null);
-      if (pts.length > 0) {
-        const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
-        const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-        const cz = pts.reduce((s, p) => s + p[2], 0) / pts.length;
-        this._controls.target.set(cx, cy, cz);
-        this._camera.position.set(cx + 2, cy + 1, cz + 2.5);
-        this._controls.update();
-      }
+    // Replace grid and axes to match data scale
+    if (this._grid) this._scene.remove(this._grid);
+    if (this._axes) this._scene.remove(this._axes);
+    const gridSize = dataScale * 1.5;
+    this._grid = new THREE.GridHelper(gridSize, 20, 0x333333, 0x222222);
+    this._axes = new THREE.AxesHelper(bodyScale * 0.5);
+
+    // Auto-fit camera to valid points
+    if (samplePts.length > 0) {
+      const cx = samplePts.reduce((s, p) => s + p[0], 0) / samplePts.length;
+      const cy = samplePts.reduce((s, p) => s + p[1], 0) / samplePts.length;
+      const cz = samplePts.reduce((s, p) => s + p[2], 0) / samplePts.length;
+
+      // Position grid at the bottom of the body
+      this._grid.position.set(cx, cy - dataScale * 0.4, cz);
+      this._scene.add(this._grid);
+      this._axes.position.set(cx - dataScale * 0.5, cy - dataScale * 0.4, cz - dataScale * 0.5);
+      this._scene.add(this._axes);
+
+      // Place camera at a distance proportional to body size
+      const camDist = dataScale * 1.2;
+      this._controls.target.set(cx, cy, cz);
+      this._camera.position.set(cx + camDist * 0.8, cy + camDist * 0.3, cz + camDist * 0.9);
+      this._camera.near = sphereRadius * 0.1;
+      this._camera.far = dataScale * 50;
+      this._camera.updateProjectionMatrix();
+      this._controls.update();
+
+      // Update directional light
+      const dirLight = this._scene.children.find(c => c.isDirectionalLight);
+      if (dirLight) dirLight.position.set(cx + camDist, cy + camDist * 2, cz + camDist);
+    } else {
+      this._scene.add(this._grid);
+      this._scene.add(this._axes);
     }
   },
 
@@ -815,7 +1134,7 @@ const Viewer3D = {
 
     for (let i = 0; i < this._spheres.length; i++) {
       const p = pts[i];
-      if (p && p[0] !== null && !isNaN(p[0])) {
+      if (this._isValid(p)) {
         this._spheres[i].position.set(p[0], p[1], p[2]);
         this._spheres[i].visible = true;
       } else {
@@ -827,7 +1146,7 @@ const Viewer3D = {
     for (const line of this._bones) {
       const { idxA, idxB } = line.userData;
       const a = pts[idxA], b = pts[idxB];
-      if (a && b && a[0] !== null && b[0] !== null && !isNaN(a[0]) && !isNaN(b[0])) {
+      if (this._isValid(a) && this._isValid(b)) {
         const pos = line.geometry.attributes.position;
         pos.setXYZ(0, a[0], a[1], a[2]);
         pos.setXYZ(1, b[0], b[1], b[2]);
@@ -1041,6 +1360,8 @@ const Calib = {
     this._canvas.style.height = dispH + 'px';
 
     this._ctx = this._canvas.getContext('2d');
+    this._ctx.imageSmoothingEnabled = true;
+    this._ctx.imageSmoothingQuality = 'high';
 
     // Reset zoom/pan
     this._zoom = 1;

@@ -79,6 +79,7 @@
             <div class="step-actions">
               <button class="btn-subtle" onclick="App.saveCalibrationConfig()">Save</button>
               <button class="btn" onclick="App.runStep('calibration')">Run Intrinsics Only</button>
+              <button class="btn-subtle" onclick="App.runStep('calibration_full')">Run Full Calibration (Pose2Sim)</button>
             </div>
           </div>
 
@@ -193,6 +194,14 @@
               <div class="step-actions">
                 <button class="btn-subtle" onclick="App.savePoseConfig()">Save</button>
                 <button class="btn" onclick="App.runStep('poseEstimation')">Run</button>
+                <button class="btn-danger btn-sm" onclick="App.abortStep()" style="display:none" id="abort-pose">Abort</button>
+              </div>
+              <div class="step-log">
+                <div class="step-log-bar">
+                  <span class="run-status" id="run-status-pose"></span>
+                </div>
+                <div class="progress"><div class="progress-bar" id="progress-pose"></div></div>
+                <pre class="console step-console" id="log-pose"></pre>
               </div>
             </div>
           </details>
@@ -207,7 +216,7 @@
             </summary>
             <div class="step-body">
               <div class="grid-2">
-                <div class="field"><label>Peak motion time (s)</label><input type="number" id="sync-peak-time" value="0.5" step="0.1"></div>
+                <div class="field"><label>Peak motion time (s)</label><input type="text" id="sync-peak-time" value="auto" placeholder="auto or 0.5"></div>
                 <div class="field"><label>Search range (s)</label><input type="number" id="sync-range" value="2.0" step="0.1"></div>
                 <div class="field"><label>Filter cutoff (Hz)</label><input type="number" id="sync-cutoff" value="6.0" step="0.5"></div>
                 <div class="field"><label>Filter order</label><input type="number" id="sync-order" value="4" min="1" max="10"></div>
@@ -228,25 +237,42 @@
                 <button class="btn-subtle" onclick="App.saveSyncConfig()">Save</button>
                 <button class="btn" onclick="App.runStep('synchronization')">Run</button>
                 <button class="btn-subtle" id="btn-trim-videos" onclick="App.trimSyncedVideos()" style="display:none">Trim Videos</button>
+                <button class="btn-danger btn-sm" onclick="App.abortStep()" style="display:none" id="abort-sync">Abort</button>
+              </div>
+              <div class="step-log">
+                <div class="step-log-bar">
+                  <span class="run-status" id="run-status-sync"></span>
+                </div>
+                <div class="progress"><div class="progress-bar" id="progress-sync"></div></div>
+                <pre class="console step-console" id="log-sync"></pre>
+              </div>
+
+              <!-- Multi-Camera Sync Video Player -->
+              <div id="multicam-player-section" style="display:none;">
+                <div class="multicam-header">
+                  <h3 class="multicam-title">Synchronized Playback</h3>
+                  <span class="multicam-source-badge" id="multicam-source-badge"></span>
+                </div>
+                <div class="multicam-grid" id="multicam-grid"></div>
+                <div class="multicam-controls">
+                  <button class="btn" id="multicam-play-btn" onclick="App.multicamTogglePlay()">&#9654; Play All</button>
+                  <button class="btn-ghost btn-sm" onclick="App.multicamStep(-1)">&#9664; Frame</button>
+                  <button class="btn-ghost btn-sm" onclick="App.multicamStep(1)">Frame &#9654;</button>
+                  <input type="range" id="multicam-slider" min="0" max="100" value="0" step="0.1" class="multicam-slider" oninput="App.multicamSeek(this.value)">
+                  <span class="multicam-time" id="multicam-time">0.00s</span>
+                  <select id="multicam-speed" class="viewer-speed" onchange="App.multicamSetSpeed(this.value)">
+                    <option value="0.25">0.25x</option>
+                    <option value="0.5">0.5x</option>
+                    <option value="1" selected>1x</option>
+                    <option value="2">2x</option>
+                  </select>
+                </div>
               </div>
             </div>
           </details>
         </div>
 
-        <!-- ── Cell 3: Log (spans 2 rows) ── -->
-        <div class="proc-cell proc-log">
-          <div class="section section-run proc-log-inner">
-            <div class="run-bar">
-              <span class="proc-log-title">Log</span>
-              <button class="btn-danger" onclick="App.abortStep()" style="display:none" id="abort-processing">Abort</button>
-              <span class="run-status" id="run-status-processing"></span>
-            </div>
-            <div class="progress"><div class="progress-bar" id="progress-processing"></div></div>
-            <pre class="console" id="log-processing"></pre>
-          </div>
-        </div>
-
-        <!-- ── Cell 4: Triangulation ── -->
+        <!-- ── Cell 3: Triangulation ── -->
         <div class="proc-cell proc-triang">
           <details class="step-details" open>
             <summary class="step-summary">
@@ -267,12 +293,20 @@
               <div class="step-actions">
                 <button class="btn-subtle" onclick="App.saveTriangConfig()">Save</button>
                 <button class="btn" onclick="App.runStep('triangulation')">Run</button>
+                <button class="btn-danger btn-sm" onclick="App.abortStep()" style="display:none" id="abort-triang">Abort</button>
+              </div>
+              <div class="step-log">
+                <div class="step-log-bar">
+                  <span class="run-status" id="run-status-triang"></span>
+                </div>
+                <div class="progress"><div class="progress-bar" id="progress-triang"></div></div>
+                <pre class="console step-console" id="log-triang"></pre>
               </div>
             </div>
           </details>
         </div>
 
-        <!-- ── Cell 5: Filtering ── -->
+        <!-- ── Cell 4: Filtering ── -->
         <div class="proc-cell proc-filt">
           <details class="step-details" open>
             <summary class="step-summary">
@@ -313,6 +347,14 @@
               <div class="step-actions">
                 <button class="btn-subtle" onclick="App.saveFilterConfig()">Save</button>
                 <button class="btn" onclick="App.runStep('filtering')">Run</button>
+                <button class="btn-danger btn-sm" onclick="App.abortStep()" style="display:none" id="abort-filt">Abort</button>
+              </div>
+              <div class="step-log">
+                <div class="step-log-bar">
+                  <span class="run-status" id="run-status-filt"></span>
+                </div>
+                <div class="progress"><div class="progress-bar" id="progress-filt"></div></div>
+                <pre class="console step-console" id="log-filt"></pre>
               </div>
             </div>
           </details>
@@ -325,8 +367,33 @@
     <section class="tab" id="tab-3">
       <header class="tab-header"><h1>Visualization</h1></header>
 
+      <!-- 2D Pose Overlay Review -->
       <div class="section">
-        <h2>TRC Files</h2>
+        <h2>2D Pose Overlay</h2>
+        <p class="hint" id="pose-video-empty">Run pose estimation first to generate overlay videos.</p>
+        <div id="pose-video-section" style="display:none;">
+          <div class="pose-video-tabs" id="pose-video-tabs"></div>
+          <div class="pose-video-wrap">
+            <video id="pose-video-player" controls class="pose-video-player">
+              Your browser does not support the video tag.
+            </video>
+          </div>
+          <div class="pose-video-controls">
+            <button class="btn-ghost btn-sm" onclick="App.poseVideoStep(-1)">&#9664; Frame</button>
+            <button class="btn-ghost btn-sm" onclick="App.poseVideoStep(1)">Frame &#9654;</button>
+            <span class="pose-video-time" id="pose-video-time"></span>
+            <select id="pose-video-speed" class="viewer-speed" onchange="App.setPoseVideoSpeed(this.value)">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header-row"><h2>TRC Files</h2><button class="btn-ghost btn-sm" onclick="App.refreshTrcFiles()" title="Refresh">&#8635; Refresh</button></div>
         <select id="viz-trc-select" class="full-width" onchange="App.onTrcSelected()"><option value="">No files found</option></select>
         <div id="viz-trc-info" class="trc-info" style="display:none;">
           <div class="trc-meta">

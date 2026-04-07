@@ -178,6 +178,7 @@ class Api:
 
         step_map = {
             "calibration": 1,
+            "calibration_full": 1,
             "poseEstimation": 2,
             "synchronization": 3,
             "triangulation": 4,
@@ -194,8 +195,24 @@ class Api:
 
         self.pm.set_step_status(step_idx, StepStatus.RUNNING)
 
+        # Full calibration: run Pose2Sim.calibration() (intrinsics + extrinsics via Pose2Sim's own GUI)
+        if step_name == 'calibration_full':
+            proj_dir = self.pm.config.project_dir
+            script_path = os.path.join(proj_dir, '_run_calibration_full.py')
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(
+                    "import os, sys, traceback\n"
+                    "sys.stdout.reconfigure(encoding='utf-8')\n"
+                    f"os.chdir({repr(proj_dir)})\n"
+                    "try:\n"
+                    "    from Pose2Sim import Pose2Sim; Pose2Sim.calibration()\n"
+                    "except Exception as e:\n"
+                    "    traceback.print_exc()\n"
+                    "    sys.exit(1)\n"
+                )
+            cmd = [sys.executable, script_path]
         # For calibration: run intrinsics only (extrinsics handled by in-window clicker)
-        if step_name == 'calibration':
+        elif step_name == 'calibration':
             proj_dir = self.pm.config.project_dir
             script_path = os.path.join(proj_dir, '_run_intrinsics.py')
             with open(script_path, 'w', encoding='utf-8') as f:
@@ -565,6 +582,57 @@ class Api:
         trc_files = glob.glob(os.path.join(proj, "**", "*.trc"), recursive=True)
         return sorted(trc_files)
 
+    def list_pose_videos(self):
+        """Find pose overlay videos (*_pose.mp4) in the project pose directory."""
+        import urllib.parse
+        proj = self.pm.config.project_dir
+        if not proj:
+            return []
+        pose_dir = os.path.join(proj, "pose")
+        if not os.path.isdir(pose_dir):
+            return []
+        videos = glob.glob(os.path.join(pose_dir, "*_pose.mp4"))
+        result = []
+        port = getattr(self, '_media_port', 0)
+        for v in sorted(videos):
+            name = os.path.basename(v)
+            # Extract camera name from filename (e.g., "cam1_mo_person1_pose.mp4" -> "cam1")
+            cam_label = name.split('_')[0] if '_' in name else name
+            # URL-encode the path for the media server (handles non-ASCII chars)
+            encoded_path = urllib.parse.quote(v)
+            url = f"http://127.0.0.1:{port}{encoded_path}" if port else ""
+            result.append({"name": name, "label": cam_label, "path": v, "url": url})
+        return result
+
+    def list_sync_videos(self):
+        """List synchronized/trimmed videos from videos-sync/ and original videos from videos/.
+        Prefers videos-sync/ if available, falls back to videos/."""
+        import urllib.parse
+        proj = self.pm.config.project_dir
+        if not proj:
+            return {"videos": [], "synced": False}
+        port = getattr(self, '_media_port', 0)
+
+        # Check for trimmed synced videos first
+        sync_dir = os.path.join(proj, "videos-sync")
+        vid_dir = os.path.join(proj, "videos")
+        use_synced = os.path.isdir(sync_dir) and bool(glob.glob(os.path.join(sync_dir, "*.mp4")))
+
+        source_dir = sync_dir if use_synced else vid_dir
+        if not os.path.isdir(source_dir):
+            return {"videos": [], "synced": False}
+
+        video_exts = ('.mp4', '.avi', '.mov', '.mkv')
+        videos = []
+        for f in sorted(os.listdir(source_dir)):
+            full = os.path.join(source_dir, f)
+            if os.path.isfile(full) and os.path.splitext(f)[1].lower() in video_exts:
+                cam_label = f.split('_')[0] if '_' in f else os.path.splitext(f)[0]
+                encoded_path = urllib.parse.quote(full)
+                url = f"http://127.0.0.1:{port}{encoded_path}" if port else ""
+                videos.append({"name": f, "label": cam_label, "url": url})
+        return {"videos": videos, "synced": use_synced}
+
     def read_trc_info(self, trc_path):
         """Read TRC file header and return marker names, frame count, frame rate."""
         try:
@@ -749,13 +817,8 @@ class Api:
             if img is None:
                 return {"success": False, "error": "No image/video found"}
             h, w = img.shape[:2]
-            # Resize for web display if too large (max 1600px wide)
-            max_w = 1600
-            if w > max_w:
-                scale = max_w / w
-                img = cv2.resize(img, (max_w, int(h * scale)))
-                h, w = img.shape[:2]
-            _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Send full-resolution image with high quality for precise point clicking
+            _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 97])
             b64 = base64.b64encode(buf).decode('utf-8')
             return {
                 "success": True,
@@ -880,17 +943,18 @@ class Api:
 
                 # Select corresponding object points
                 objp = object_coords_3d[:len(pts_2d)]
-                # solvePnP expects mm
+                # solvePnP in mm space (Pose2Sim convention: objp * 1000)
                 success, r, t = cv2.solvePnP(objp * 1000, pts_2d, mtx, dist)
                 if not success:
                     results_per_cam.append({"cam": cam_names[cam_idx], "error": "solvePnP failed"})
                     continue
 
                 r = r.flatten()
-                t = t.flatten() / 1000.0  # back to meters
+                t = t.flatten()
+                t /= 1000  # back to meters (Pose2Sim convention)
 
-                # Compute reprojection error
-                proj_pts, _ = cv2.projectPoints(objp * 1000, r, t * 1000, mtx, dist)
+                # Compute reprojection error (use original objp units + meter-scale r,t)
+                proj_pts, _ = cv2.projectPoints(objp, r, t, mtx, dist)
                 proj_pts = proj_pts.squeeze()
                 errors = np.sqrt(np.sum((proj_pts - pts_2d) ** 2, axis=1))
                 rms = np.sqrt(np.mean(errors ** 2))
@@ -924,6 +988,12 @@ class Api:
                 output[name] = entry
 
             out_path = os.path.join(calib_dir, "Calib_scene.toml")
+            # Backup existing calibration before overwriting
+            if os.path.exists(out_path):
+                import shutil, datetime
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = os.path.join(calib_dir, f"Calib_scene_backup_{ts}.toml")
+                shutil.copy2(out_path, backup_path)
             with open(out_path, 'w') as f:
                 toml.dump(output, f)
 

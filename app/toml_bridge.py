@@ -31,14 +31,21 @@ def load_toml(project_dir: str) -> dict:
 
 def _fmt(value) -> str:
     """Format a Python value as a TOML inline literal."""
+    if value is None:
+        return "'auto'"             # safe fallback for None values
     if isinstance(value, bool):
         return "true" if value else "false"
     elif isinstance(value, str):
         return f"'{value}'"
+    elif isinstance(value, (int, float)):
+        import math
+        if math.isnan(value) or math.isinf(value):
+            return "'auto'"         # NaN/Inf are not valid TOML
+        return str(value)
     elif isinstance(value, list):
         parts = ", ".join(_fmt(x) for x in value)
         return f"[{parts}]"
-    else:                           # int, float
+    else:
         return str(value)
 
 
